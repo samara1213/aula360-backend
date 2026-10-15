@@ -18,6 +18,7 @@ import {
 } from '../decorators/require-permission.decorator';
 import { AuthUser } from '../interfaces/auth-user.interface';
 import { ACTIVE_ASSIGNMENT_CONDITION } from '../../modules/security/active-assignment';
+import { activeMenuCondition } from '../../modules/security/active-menu';
 
 /** Mapeo fijo acción -> columna (nunca se interpola texto del usuario). */
 export const ACTION_COLUMN: Record<
@@ -33,7 +34,9 @@ export const ACTION_COLUMN: Record<
  * Guard global de autorización. Se ejecuta después de JwtAuthGuard.
  * - @SuperAdminOnly(): exige user_type SUPER_ADMIN.
  * - @RequirePermission(slug, acción): exige el permiso en algún rol del usuario
- *   dentro de la institución activa (rol + institución, no solo rol).
+ *   dentro de la institución activa (rol + institución, no solo rol). La opción
+ *   de menú y sus ancestros deben estar activos. Con allowSuperAdmin, el
+ *   SUPER_ADMIN pasa sin institución (solo catálogos globales).
  * El menú solo controla lo que se ve; la autorización real está aquí.
  */
 @Injectable()
@@ -66,6 +69,10 @@ export class PermissionsGuard implements CanActivate {
       if (!required) return true;
     }
 
+    if (required.allowSuperAdmin && user.userType === 'SUPER_ADMIN') {
+      return true;
+    }
+
     if (!user.institutionId || !(await this.isAllowed(user, required))) {
       throw new ForbiddenException('No tiene permiso para esta acción');
     }
@@ -91,7 +98,8 @@ export class PermissionsGuard implements CanActivate {
         institutionId,
       })
       .andWhere(ACTIVE_ASSIGNMENT_CONDITION)
-      .andWhere('m.slug = :slug AND m.is_active = true', { slug });
+      .andWhere('m.slug = :slug', { slug })
+      .andWhere(activeMenuCondition('m'));
     if (action !== 'view') {
       qb.andWhere(`p.${ACTION_COLUMN[action]} = true`);
     }

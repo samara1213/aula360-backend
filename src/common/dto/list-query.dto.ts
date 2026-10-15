@@ -16,8 +16,8 @@ const toBoolean = ({ value }: { value: unknown }) =>
 const trim = ({ value }: { value: unknown }) =>
   typeof value === 'string' ? value.trim() : value;
 
-/** Paginación + búsqueda por texto + filtro por estado (is_active). */
-export class ListQueryDto extends PaginationDto {
+/** Paginación + búsqueda por texto. */
+export class SearchQueryDto extends PaginationDto {
   @ApiPropertyOptional({ description: 'Texto a buscar', maxLength: 100 })
   @IsOptional()
   @Transform(trim)
@@ -25,7 +25,10 @@ export class ListQueryDto extends PaginationDto {
   @IsNotEmpty()
   @MaxLength(100)
   search?: string;
+}
 
+/** Paginación + búsqueda por texto + filtro por estado (is_active). */
+export class ListQueryDto extends SearchQueryDto {
   @ApiPropertyOptional({ description: 'Filtrar por estado activo/inactivo' })
   @IsOptional()
   @Transform(toBoolean)

@@ -1,6 +1,6 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
-import { UserInstitutionRoleEntity } from '../security/entities/user-institution-role.entity';
+import { SecurityModule } from '../security/security.module';
 import { CampusesController } from './campuses.controller';
 import { CampusesService } from './campuses.service';
 import { CampusEntity } from './entities/campus.entity';
@@ -10,11 +10,8 @@ import { InstitutionsService } from './institutions.service';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([
-      InstitutionEntity,
-      CampusEntity,
-      UserInstitutionRoleEntity,
-    ]),
+    TypeOrmModule.forFeature([InstitutionEntity, CampusEntity]),
+    SecurityModule,
   ],
   controllers: [InstitutionsController, CampusesController],
   providers: [InstitutionsService, CampusesService],

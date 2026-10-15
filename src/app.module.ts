@@ -10,6 +10,7 @@ import { validateEnv } from './config/env.validation';
 import { buildDataSourceOptions } from './database/typeorm.config';
 import { AuthModule } from './modules/auth/auth.module';
 import { InstitutionsModule } from './modules/institutions/institutions.module';
+import { SecurityModule } from './modules/security/security.module';
 
 @Module({
   imports: [
@@ -34,6 +35,7 @@ import { InstitutionsModule } from './modules/institutions/institutions.module';
     }),
     AuthModule,
     InstitutionsModule,
+    SecurityModule,
   ],
   controllers: [HealthController],
   providers: [

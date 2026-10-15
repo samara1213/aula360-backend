@@ -1,6 +1,5 @@
 import {
   ConflictException,
-  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -13,13 +12,10 @@ import {
   toSkipTake,
 } from '../../common/dto/pagination.dto';
 import { PermissionAction } from '../../common/decorators/require-permission.decorator';
-import { ACTION_COLUMN } from '../../common/guards/permissions.guard';
 import { AuthUser } from '../../common/interfaces/auth-user.interface';
 import { activeInstitutionId } from '../../common/utils/active-institution';
 import { rejectNullFields } from '../../common/validators/reject-null-fields';
-import { ACTIVE_ASSIGNMENT_CONDITION } from '../security/active-assignment';
-import { RoleMenuPermissionEntity } from '../security/entities/role-menu-permission.entity';
-import { UserInstitutionRoleEntity } from '../security/entities/user-institution-role.entity';
+import { PermissionsReader } from '../security/permissions-reader.service';
 import { CampusResponseDto } from './dto/campus-response.dto';
 import { CreateCampusDto } from './dto/create-campus.dto';
 import { UpdateCampusDto } from './dto/update-campus.dto';
@@ -27,9 +23,6 @@ import { CampusEntity } from './entities/campus.entity';
 
 /** Slug de menú que controla las sedes (permiso de @RequirePermission). */
 export const CAMPUS_PERMISSION = 'institution.campuses';
-
-/** null = alcance en toda la institución; lista = solo esas sedes. */
-type CampusScope = string[] | null;
 
 /**
  * Sedes de la institución activa del usuario. Toda consulta filtra por
@@ -43,8 +36,7 @@ export class CampusesService {
   constructor(
     @InjectRepository(CampusEntity)
     private readonly campuses: Repository<CampusEntity>,
-    @InjectRepository(UserInstitutionRoleEntity)
-    private readonly memberships: Repository<UserInstitutionRoleEntity>,
+    private readonly permissions: PermissionsReader,
   ) {}
 
   async findAll(
@@ -52,7 +44,12 @@ export class CampusesService {
     query: ListQueryDto,
   ): Promise<Paginated<CampusResponseDto>> {
     const institutionId = activeInstitutionId(user);
-    const scope = await this.campusScope(user.userId, institutionId, 'view');
+    const scope = await this.permissions.campusScope(
+      user.userId,
+      institutionId,
+      CAMPUS_PERMISSION,
+      'view',
+    );
 
     const qb = this.campuses
       .createQueryBuilder('c')
@@ -82,7 +79,12 @@ export class CampusesService {
 
   async findOne(user: AuthUser, id: string): Promise<CampusResponseDto> {
     const institutionId = activeInstitutionId(user);
-    const scope = await this.campusScope(user.userId, institutionId, 'view');
+    const scope = await this.permissions.campusScope(
+      user.userId,
+      institutionId,
+      CAMPUS_PERMISSION,
+      'view',
+    );
     if (scope && !scope.includes(id)) throw this.notFound();
     return CampusResponseDto.from(await this.getOrFail(institutionId, id));
   }
@@ -151,51 +153,18 @@ export class CampusesService {
     return entity;
   }
 
-  /**
-   * Alcance según las asignaciones vigentes (sede activa) cuyo rol (global o de
-   * esta institución) tiene el permiso y la acción pedidos. Así, un rol sin el permiso pero sin sede no
-   * amplía el alcance de otro rol que sí lo tiene pero está limitado a una sede.
-   */
-  private async campusScope(
-    userId: string,
-    institutionId: string,
-    action: PermissionAction,
-  ): Promise<CampusScope> {
-    const qb = this.memberships
-      .createQueryBuilder('uir')
-      .select('DISTINCT uir.campus_id', 'campusId')
-      .innerJoin(
-        'uir.role',
-        'r',
-        'r.institution_id IS NULL OR r.institution_id = uir.institution_id',
-      )
-      .innerJoin(RoleMenuPermissionEntity, 'p', 'p.role_id = uir.role_id')
-      .innerJoin('p.menuOption', 'm', 'm.slug = :slug AND m.is_active = true', {
-        slug: CAMPUS_PERMISSION,
-      })
-      .where('uir.user_id = :userId AND uir.institution_id = :institutionId', {
-        userId,
-        institutionId,
-      })
-      .andWhere(ACTIVE_ASSIGNMENT_CONDITION);
-    if (action !== 'view') {
-      qb.andWhere(`p.${ACTION_COLUMN[action]} = true`);
-    }
-    const rows = await qb.getRawMany<{ campusId: string | null }>();
-    if (rows.some((r) => r.campusId === null)) return null;
-    return rows.map((r) => r.campusId as string);
-  }
-
   private async requireInstitutionWideScope(
     user: AuthUser,
     action: Exclude<PermissionAction, 'view'>,
   ): Promise<string> {
     const institutionId = activeInstitutionId(user);
-    if (await this.campusScope(user.userId, institutionId, action)) {
-      throw new ForbiddenException(
-        'Su acceso está limitado a una sede: no puede gestionar sedes',
-      );
-    }
+    await this.permissions.requireInstitutionWide(
+      user,
+      institutionId,
+      CAMPUS_PERMISSION,
+      action,
+      'Su acceso está limitado a una sede: no puede gestionar sedes',
+    );
     return institutionId;
   }
 

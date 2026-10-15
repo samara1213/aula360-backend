@@ -8,8 +8,8 @@ import { Test } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { QueryFailedError } from 'typeorm';
 import { AuthUser } from '../../common/interfaces/auth-user.interface';
-import { UserInstitutionRoleEntity } from '../security/entities/user-institution-role.entity';
-import { CampusesService } from './campuses.service';
+import { PermissionsReader } from '../security/permissions-reader.service';
+import { CAMPUS_PERMISSION, CampusesService } from './campuses.service';
 import { CampusEntity } from './entities/campus.entity';
 
 const user: AuthUser = {
@@ -51,19 +51,31 @@ describe('CampusesService', () => {
     create: jest.fn((v: Partial<CampusEntity>) => v),
     save: jest.fn((v: CampusEntity) => Promise.resolve(v)),
   };
-  const scopeQb = {
-    select: jest.fn().mockReturnThis(),
-    innerJoin: jest.fn().mockReturnThis(),
-    where: jest.fn().mockReturnThis(),
-    andWhere: jest.fn().mockReturnThis(),
-    getRawMany: jest.fn(),
+  const permissions = {
+    campusScope: jest.fn(),
+    // Misma regla que el real: con alcance por sede responde 403.
+    requireInstitutionWide: jest.fn(
+      async (
+        u: AuthUser,
+        institutionId: string,
+        slug: string,
+        action: string,
+        message: string,
+      ) => {
+        const scope: unknown = await permissions.campusScope(
+          u.userId,
+          institutionId,
+          slug,
+          action,
+        );
+        if (scope) throw new ForbiddenException(message);
+      },
+    ),
   };
-  const memberships = { createQueryBuilder: jest.fn(() => scopeQb) };
 
-  const institutionWide = () =>
-    scopeQb.getRawMany.mockResolvedValue([{ campusId: null }]);
+  const institutionWide = () => permissions.campusScope.mockResolvedValue(null);
   const limitedTo = (...ids: string[]) =>
-    scopeQb.getRawMany.mockResolvedValue(ids.map((campusId) => ({ campusId })));
+    permissions.campusScope.mockResolvedValue(ids);
 
   beforeEach(async () => {
     jest.clearAllMocks();
@@ -71,10 +83,7 @@ describe('CampusesService', () => {
       providers: [
         CampusesService,
         { provide: getRepositoryToken(CampusEntity), useValue: campuses },
-        {
-          provide: getRepositoryToken(UserInstitutionRoleEntity),
-          useValue: memberships,
-        },
+        { provide: PermissionsReader, useValue: permissions },
       ],
     }).compile();
     service = moduleRef.get(CampusesService);
@@ -151,16 +160,15 @@ describe('CampusesService', () => {
       expect(result.institutionId).toBe('inst-A');
     });
 
-    it('calcula el alcance solo con roles que tienen el permiso de crear', async () => {
+    it('calcula el alcance con el permiso de crear sedes', async () => {
       institutionWide();
       await service.create(user, { name: 'Norte' });
-      expect(scopeQb.innerJoin).toHaveBeenCalledWith(
-        'p.menuOption',
-        'm',
-        'm.slug = :slug AND m.is_active = true',
-        { slug: 'institution.campuses' },
+      expect(permissions.campusScope).toHaveBeenCalledWith(
+        'user-1',
+        'inst-A',
+        CAMPUS_PERMISSION,
+        'create',
       );
-      expect(scopeQb.andWhere).toHaveBeenCalledWith('p.can_create = true');
     });
 
     it('403 si su acceso está limitado a una sede', async () => {
@@ -218,7 +226,12 @@ describe('CampusesService', () => {
       const result = await service.setActive(user, 'campus-1', false);
       expect(result.isActive).toBe(false);
       expect(campuses.save).toHaveBeenCalled();
-      expect(scopeQb.andWhere).toHaveBeenCalledWith('p.can_delete = true');
+      expect(permissions.campusScope).toHaveBeenCalledWith(
+        'user-1',
+        'inst-A',
+        CAMPUS_PERMISSION,
+        'delete',
+      );
     });
   });
 });

@@ -164,6 +164,11 @@ export class TestData {
       await m.query(
         `DELETE FROM roles WHERE institution_id IN (SELECT id FROM institutions WHERE nit LIKE 'E2E-%')`,
       );
+      // Roles globales y opciones de menú creados por las e2e (sus permisos caen en cascada).
+      await m.query(
+        `DELETE FROM roles WHERE institution_id IS NULL AND name LIKE 'E2E %'`,
+      );
+      await m.query(`DELETE FROM menu_options WHERE slug LIKE 'e2e-%'`);
       await m.query(
         `DELETE FROM campuses WHERE institution_id IN (SELECT id FROM institutions WHERE nit LIKE 'E2E-%')`,
       );

@@ -10,6 +10,7 @@ import {
 import { AuthUser } from '../interfaces/auth-user.interface';
 import { PermissionsGuard } from './permissions.guard';
 import { ACTIVE_ASSIGNMENT_CONDITION } from '../../modules/security/active-assignment';
+import { activeMenuCondition } from '../../modules/security/active-menu';
 
 function createQueryBuilderMock(exists: boolean) {
   const qb = {
@@ -73,8 +74,10 @@ describe('PermissionsGuard', () => {
     );
     // Solo asignaciones de toda la institución o de una sede activa.
     expect(qb.andWhere).toHaveBeenCalledWith(ACTIVE_ASSIGNMENT_CONDITION);
+    // La opción y sus ancestros deben estar activos.
+    expect(qb.andWhere).toHaveBeenCalledWith(activeMenuCondition('m'));
     // "view" no exige columnas can_*.
-    expect(qb.andWhere).toHaveBeenCalledTimes(2);
+    expect(qb.andWhere).toHaveBeenCalledTimes(3);
     // Solo roles globales o de la misma institución de la asignación.
     expect(qb.innerJoin).toHaveBeenCalledWith(
       'p.role',
@@ -131,6 +134,34 @@ describe('PermissionsGuard', () => {
       superAdminOnly: true,
     });
     await expect(guard.canActivate(ctx)).resolves.toBe(true);
+  });
+
+  it('con allowSuperAdmin el SUPER_ADMIN pasa sin institución', async () => {
+    const { guard, ctx, qb } = setup({
+      user: { ...teacher, userType: 'SUPER_ADMIN', institutionId: null },
+      permission: {
+        slug: 'security.menu-options',
+        action: 'view',
+        allowSuperAdmin: true,
+      },
+    });
+    await expect(guard.canActivate(ctx)).resolves.toBe(true);
+    expect(qb.getExists).not.toHaveBeenCalled();
+  });
+
+  it('allowSuperAdmin no exime a los demás usuarios', async () => {
+    const { guard, ctx } = setup({
+      user: teacher,
+      permission: {
+        slug: 'security.menu-options',
+        action: 'view',
+        allowSuperAdmin: true,
+      },
+      exists: false,
+    });
+    await expect(guard.canActivate(ctx)).rejects.toBeInstanceOf(
+      ForbiddenException,
+    );
   });
 
   it('el SUPER_ADMIN no se salta @RequirePermission', async () => {
