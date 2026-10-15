@@ -18,7 +18,6 @@ import { UserEntity } from './user.entity';
   'institutionId',
   'studentCode',
 ])
-@Index('idx_students_institution', ['institutionId'])
 @Index('idx_students_campus', ['campusId'])
 export class StudentEntity {
   @PrimaryGeneratedColumn('uuid', { primaryKeyConstraintName: 'students_pkey' })

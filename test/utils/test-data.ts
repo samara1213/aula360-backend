@@ -3,7 +3,10 @@ import { createHash, randomBytes } from 'crypto';
 import { DataSource, In, IsNull } from 'typeorm';
 import { PasswordResetTokenEntity } from '../../src/modules/auth/entities/password-reset-token.entity';
 import { RefreshTokenEntity } from '../../src/modules/auth/entities/refresh-token.entity';
+import { CampusEntity } from '../../src/modules/institutions/entities/campus.entity';
 import { InstitutionEntity } from '../../src/modules/institutions/entities/institution.entity';
+import { MenuOptionEntity } from '../../src/modules/security/entities/menu-option.entity';
+import { RoleMenuPermissionEntity } from '../../src/modules/security/entities/role-menu-permission.entity';
 import { RoleEntity } from '../../src/modules/security/entities/role.entity';
 import { UserInstitutionRoleEntity } from '../../src/modules/security/entities/user-institution-role.entity';
 import {
@@ -74,13 +77,56 @@ export class TestData {
     userId: string,
     institutionId: string,
     roleName = 'INSTITUTION_ADMIN',
+    campusId: string | null = null,
   ): Promise<void> {
     const role = await this.ds
       .getRepository(RoleEntity)
       .findOneOrFail({ where: { name: roleName, institutionId: IsNull() } });
     await this.ds
       .getRepository(UserInstitutionRoleEntity)
-      .insert({ userId, institutionId, roleId: role.id });
+      .insert({ userId, institutionId, roleId: role.id, campusId });
+  }
+
+  /** Sede de una institución creada por esta fábrica (se borra con ella). */
+  async createCampus(
+    institutionId: string,
+    name = 'Sede E2E',
+  ): Promise<CampusEntity> {
+    return this.ds
+      .getRepository(CampusEntity)
+      .save({ institutionId, name: `${name} ${uniqueSuffix()}` });
+  }
+
+  /**
+   * Rol propio de una institución con permisos completos sobre los slugs dados.
+   * Se borra junto con la institución (sus permisos caen en cascada).
+   */
+  async createInstitutionRole(
+    institutionId: string,
+    slugs: string[],
+  ): Promise<RoleEntity> {
+    const role = await this.ds.getRepository(RoleEntity).save({
+      institutionId,
+      name: `E2E Rol ${uniqueSuffix()}`,
+    });
+    const options = await this.ds
+      .getRepository(MenuOptionEntity)
+      .findBy({ slug: In(slugs) });
+    await this.ds.getRepository(RoleMenuPermissionEntity).insert(
+      options.map((option) => ({
+        roleId: role.id,
+        menuOptionId: option.id,
+        canCreate: true,
+        canUpdate: true,
+        canDelete: true,
+      })),
+    );
+    return role;
+  }
+
+  /** Registra una institución creada por la API para borrarla en cleanup(). */
+  trackInstitution(id: string): void {
+    this.institutionIds.push(id);
   }
 
   /** Crea un token de recuperación conocido (el real solo llega por correo). */
@@ -116,6 +162,12 @@ export class TestData {
              OR institution_id IN (SELECT id FROM institutions WHERE nit LIKE 'E2E-%')`,
       );
       await m.query(
+        `DELETE FROM roles WHERE institution_id IN (SELECT id FROM institutions WHERE nit LIKE 'E2E-%')`,
+      );
+      await m.query(
+        `DELETE FROM campuses WHERE institution_id IN (SELECT id FROM institutions WHERE nit LIKE 'E2E-%')`,
+      );
+      await m.query(
         `DELETE FROM users WHERE document_number LIKE 'E2E%' AND (email IS NULL OR email LIKE 'e2e-%@test.aula360.local')`,
       );
       await m.query(`DELETE FROM institutions WHERE nit LIKE 'E2E-%'`);
@@ -140,6 +192,12 @@ export class TestData {
         await m.getRepository(UserEntity).delete({ id: In(this.userIds) });
       }
       if (this.institutionIds.length) {
+        await m
+          .getRepository(RoleEntity)
+          .delete({ institutionId: In(this.institutionIds) });
+        await m
+          .getRepository(CampusEntity)
+          .delete({ institutionId: In(this.institutionIds) });
         await m
           .getRepository(InstitutionEntity)
           .delete({ id: In(this.institutionIds) });

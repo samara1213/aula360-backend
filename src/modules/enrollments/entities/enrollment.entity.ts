@@ -27,6 +27,7 @@ export type EnrollmentStatus = (typeof ENROLLMENT_STATUSES)[number];
   'academicYearId',
 ])
 @Index('idx_enrollments_course', ['courseId'])
+@Index('idx_enrollments_academic_year', ['academicYearId'])
 @Check(
   'enrollments_status_check',
   `status IN ('ENROLLED', 'DROPPED', 'GRADUATED', 'SUSPENDED')`,

@@ -19,6 +19,7 @@ import { decimalTransformer } from '../../../database/transformers/decimal.trans
 @Entity('report_cards')
 @Unique('report_cards_student_id_period_id_key', ['studentId', 'periodId'])
 @Index('idx_report_cards_period_course', ['periodId', 'courseId'])
+@Index('idx_report_cards_course', ['courseId'])
 @Check('chk_report_cards_average', 'final_average >= 0')
 export class ReportCardEntity {
   @PrimaryGeneratedColumn('uuid', {

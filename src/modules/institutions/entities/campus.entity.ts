@@ -2,7 +2,6 @@ import {
   Column,
   CreateDateColumn,
   Entity,
-  Index,
   JoinColumn,
   ManyToOne,
   PrimaryGeneratedColumn,
@@ -13,7 +12,6 @@ import { InstitutionEntity } from './institution.entity';
 
 @Entity('campuses')
 @Unique('campuses_institution_id_name_key', ['institutionId', 'name'])
-@Index('idx_campuses_institution', ['institutionId'])
 export class CampusEntity {
   @PrimaryGeneratedColumn('uuid', { primaryKeyConstraintName: 'campuses_pkey' })
   id: string;

@@ -29,6 +29,7 @@ import { RoleEntity } from './role.entity';
 @Index('idx_uir_user', ['userId'])
 @Index('idx_uir_institution', ['institutionId'])
 @Index('idx_uir_role', ['roleId'])
+@Index('idx_uir_campus', ['campusId'])
 export class UserInstitutionRoleEntity {
   @PrimaryGeneratedColumn('uuid', {
     primaryKeyConstraintName: 'user_institution_roles_pkey',

@@ -17,9 +17,13 @@ import {
   SUPER_ADMIN_ONLY_KEY,
 } from '../decorators/require-permission.decorator';
 import { AuthUser } from '../interfaces/auth-user.interface';
+import { ACTIVE_ASSIGNMENT_CONDITION } from '../../modules/security/active-assignment';
 
 /** Mapeo fijo acción -> columna (nunca se interpola texto del usuario). */
-const ACTION_COLUMN: Record<Exclude<PermissionAction, 'view'>, string> = {
+export const ACTION_COLUMN: Record<
+  Exclude<PermissionAction, 'view'>,
+  string
+> = {
   create: 'can_create',
   update: 'can_update',
   delete: 'can_delete',
@@ -86,6 +90,7 @@ export class PermissionsGuard implements CanActivate {
         userId,
         institutionId,
       })
+      .andWhere(ACTIVE_ASSIGNMENT_CONDITION)
       .andWhere('m.slug = :slug AND m.is_active = true', { slug });
     if (action !== 'view') {
       qb.andWhere(`p.${ACTION_COLUMN[action]} = true`);

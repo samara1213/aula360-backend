@@ -21,6 +21,7 @@ function membershipsQb(rows: { id: string; name: string; role: string }[]) {
     innerJoin: jest.fn().mockReturnThis(),
     select: jest.fn().mockReturnThis(),
     where: jest.fn().mockReturnThis(),
+    andWhere: jest.fn().mockReturnThis(),
     orderBy: jest.fn().mockReturnThis(),
     addOrderBy: jest.fn().mockReturnThis(),
     getRawMany: jest.fn().mockResolvedValue(rows),

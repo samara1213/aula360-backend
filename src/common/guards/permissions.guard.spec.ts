@@ -9,6 +9,7 @@ import {
 } from '../decorators/require-permission.decorator';
 import { AuthUser } from '../interfaces/auth-user.interface';
 import { PermissionsGuard } from './permissions.guard';
+import { ACTIVE_ASSIGNMENT_CONDITION } from '../../modules/security/active-assignment';
 
 function createQueryBuilderMock(exists: boolean) {
   const qb = {
@@ -70,8 +71,10 @@ describe('PermissionsGuard', () => {
       expect.stringContaining('uir.institution_id = :institutionId'),
       { userId: 'u1', institutionId: 'inst-1' },
     );
+    // Solo asignaciones de toda la institución o de una sede activa.
+    expect(qb.andWhere).toHaveBeenCalledWith(ACTIVE_ASSIGNMENT_CONDITION);
     // "view" no exige columnas can_*.
-    expect(qb.andWhere).toHaveBeenCalledTimes(1);
+    expect(qb.andWhere).toHaveBeenCalledTimes(2);
     // Solo roles globales o de la misma institución de la asignación.
     expect(qb.innerJoin).toHaveBeenCalledWith(
       'p.role',

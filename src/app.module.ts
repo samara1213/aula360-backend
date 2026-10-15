@@ -9,6 +9,7 @@ import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 import { validateEnv } from './config/env.validation';
 import { buildDataSourceOptions } from './database/typeorm.config';
 import { AuthModule } from './modules/auth/auth.module';
+import { InstitutionsModule } from './modules/institutions/institutions.module';
 
 @Module({
   imports: [
@@ -32,6 +33,7 @@ import { AuthModule } from './modules/auth/auth.module';
       skipIf: () => process.env.THROTTLE_DISABLED === 'true',
     }),
     AuthModule,
+    InstitutionsModule,
   ],
   controllers: [HealthController],
   providers: [

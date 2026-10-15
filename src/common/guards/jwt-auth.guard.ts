@@ -20,6 +20,7 @@ import {
   AccessTokenPayload,
   AuthUser,
 } from '../interfaces/auth-user.interface';
+import { ACTIVE_ASSIGNMENT_CONDITION } from '../../modules/security/active-assignment';
 
 /**
  * Guard global: exige un access token válido en la cookie, que el usuario siga
@@ -95,7 +96,7 @@ export class JwtAuthGuard implements CanActivate {
     return true;
   }
 
-  /** El usuario sigue vinculado a la institución y esta sigue activa. */
+  /** El usuario sigue vinculado a la institución (con una sede activa si es por sede) y esta sigue activa. */
   private hasMembership(
     userId: string,
     institutionId: string,
@@ -107,6 +108,7 @@ export class JwtAuthGuard implements CanActivate {
         userId,
         institutionId,
       })
+      .andWhere(ACTIVE_ASSIGNMENT_CONDITION)
       .getExists();
   }
 }

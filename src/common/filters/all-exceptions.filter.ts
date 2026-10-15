@@ -16,6 +16,10 @@ const PG_ERRORS: Record<string, { status: HttpStatus; message: string }> = {
     status: HttpStatus.CONFLICT,
     message: 'El recurso está relacionado con otros datos',
   },
+  '23502': {
+    status: HttpStatus.BAD_REQUEST,
+    message: 'Falta un dato obligatorio',
+  },
   '23514': {
     status: HttpStatus.BAD_REQUEST,
     message: 'Los datos no cumplen las reglas',

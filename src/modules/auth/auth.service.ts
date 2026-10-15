@@ -32,6 +32,7 @@ import {
 import { PasswordResetTokenEntity } from './entities/password-reset-token.entity';
 import { RefreshTokenEntity } from './entities/refresh-token.entity';
 import { TokenService } from './token.service';
+import { ACTIVE_ASSIGNMENT_CONDITION } from '../security/active-assignment';
 
 export const INVALID_CREDENTIALS = 'Credenciales inválidas';
 const RESET_TOKEN_TTL_MS = 30 * 60 * 1000;
@@ -440,6 +441,7 @@ export class AuthService implements OnModuleInit {
       .innerJoin('uir.role', 'r')
       .select(['i.id AS id', 'i.name AS name', 'r.name AS role'])
       .where('uir.user_id = :userId', { userId })
+      .andWhere(ACTIVE_ASSIGNMENT_CONDITION)
       .orderBy('i.name', 'ASC')
       .addOrderBy('r.name', 'ASC')
       .getRawMany<{ id: string; name: string; role: string }>();

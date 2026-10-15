@@ -3,13 +3,16 @@ import { Type } from 'class-transformer';
 import { IsInt, IsOptional, Max, Min } from 'class-validator';
 
 export const MAX_PAGE_SIZE = 100;
+/** Tope de página: evita OFFSET enormes. */
+export const MAX_PAGE = 10_000;
 
 export class PaginationDto {
-  @ApiPropertyOptional({ default: 1, minimum: 1 })
+  @ApiPropertyOptional({ default: 1, minimum: 1, maximum: MAX_PAGE })
   @IsOptional()
   @Type(() => Number)
   @IsInt()
   @Min(1)
+  @Max(MAX_PAGE)
   page: number = 1;
 
   @ApiPropertyOptional({ default: 20, minimum: 1, maximum: MAX_PAGE_SIZE })
