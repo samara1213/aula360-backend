@@ -17,8 +17,13 @@ import {
   Paginated,
   toSkipTake,
 } from '../../common/dto/pagination.dto';
+import { AuthUser } from '../../common/interfaces/auth-user.interface';
+import { activeInstitutionId } from '../../common/utils/active-institution';
 import { rejectNullFields } from '../../common/validators/reject-null-fields';
+import { ValidatedFile } from '../../storage/image-file.pipe';
+import { StorageService } from '../../storage/storage.service';
 import { ScoreEntity } from '../evaluations/entities/score.entity';
+import { PermissionsReader } from '../security/permissions-reader.service';
 import { CreateInstitutionDto } from './dto/create-institution.dto';
 import { InstitutionResponseDto } from './dto/institution-response.dto';
 import { UpdateInstitutionDto } from './dto/update-institution.dto';
@@ -33,9 +38,15 @@ const DEFAULT_SCALE = {
 
 type Scale = typeof DEFAULT_SCALE;
 
+/** Slug de menú que controla los datos de la propia institución. */
+export const INSTITUTION_PERMISSION = 'institution';
+
+const LOGO_BUCKET = 'logos';
+
 /**
  * Gestión de instituciones. La escritura y los listados son solo de SUPER_ADMIN
- * (el controller lo exige); el resto de usuarios solo lee su institución activa.
+ * (el controller lo exige); el resto de usuarios lee su institución activa y,
+ * con permiso de edición en toda ella, cambia su logo.
  * Nunca se borran: se desactivan (is_active), lo que corta el acceso de sus usuarios.
  */
 @Injectable()
@@ -44,6 +55,8 @@ export class InstitutionsService {
     @InjectRepository(InstitutionEntity)
     private readonly institutions: Repository<InstitutionEntity>,
     private readonly dataSource: DataSource,
+    private readonly storage: StorageService,
+    private readonly permissions: PermissionsReader,
   ) {}
 
   async findAll(
@@ -64,14 +77,14 @@ export class InstitutionsService {
     const { skip, take } = toSkipTake(query);
     const [rows, total] = await qb.skip(skip).take(take).getManyAndCount();
     return paginate(
-      rows.map((row) => InstitutionResponseDto.from(row)),
+      rows.map((row) => this.toDto(row)),
       total,
       query,
     );
   }
 
   async findOne(id: string): Promise<InstitutionResponseDto> {
-    return InstitutionResponseDto.from(await this.getOrFail(id));
+    return this.toDto(await this.getOrFail(id));
   }
 
   async create(dto: CreateInstitutionDto): Promise<InstitutionResponseDto> {
@@ -86,7 +99,7 @@ export class InstitutionsService {
       name: dto.name,
       ...scale,
     });
-    return InstitutionResponseDto.from(await this.save(entity));
+    return this.toDto(await this.save(entity));
   }
 
   async update(
@@ -130,7 +143,7 @@ export class InstitutionsService {
       if (dto.nit !== undefined) entity.nit = dto.nit;
       if (dto.name !== undefined) entity.name = dto.name;
       Object.assign(entity, scale);
-      return InstitutionResponseDto.from(await this.save(entity, repo));
+      return this.toDto(await this.save(entity, repo));
     });
   }
 
@@ -144,7 +157,84 @@ export class InstitutionsService {
       entity.isActive = isActive;
       await this.institutions.save(entity);
     }
-    return InstitutionResponseDto.from(entity);
+    return this.toDto(entity);
+  }
+
+  /** Logo de la institución activa: exige el permiso en toda la institución. */
+  async replaceCurrentLogo(
+    user: AuthUser,
+    file: ValidatedFile,
+  ): Promise<InstitutionResponseDto> {
+    return this.replaceLogo(await this.currentForLogo(user), file);
+  }
+
+  async removeCurrentLogo(user: AuthUser): Promise<InstitutionResponseDto> {
+    return this.removeLogo(await this.currentForLogo(user));
+  }
+
+  /**
+   * Sube el logo nuevo, guarda su ruta con la fila bloqueada y después borra el
+   * anterior. Si falla la BD, se borra el recién subido (no quedan huérfanos).
+   */
+  async replaceLogo(
+    id: string,
+    file: ValidatedFile,
+  ): Promise<InstitutionResponseDto> {
+    await this.getOrFail(id); // 404 antes de subir nada
+    const path = await this.storage.upload(LOGO_BUCKET, `${id}/logos`, file);
+    try {
+      return await this.setLogoPath(id, path);
+    } catch (error) {
+      await this.storage.removeQuietly(LOGO_BUCKET, path);
+      throw error;
+    }
+  }
+
+  async removeLogo(id: string): Promise<InstitutionResponseDto> {
+    return this.setLogoPath(id, null);
+  }
+
+  private async setLogoPath(
+    id: string,
+    path: string | null,
+  ): Promise<InstitutionResponseDto> {
+    const { saved, previous } = await this.dataSource.transaction(
+      async (manager) => {
+        const repo = manager.getRepository(InstitutionEntity);
+        const entity = await repo.findOne({
+          where: { id },
+          lock: { mode: 'pessimistic_write' },
+        });
+        if (!entity) throw new NotFoundException('Institución no encontrada');
+        const old = entity.logoPath;
+        if (old === path) return { saved: entity, previous: old };
+        entity.logoPath = path;
+        return { saved: await repo.save(entity), previous: old };
+      },
+    );
+    if (previous && previous !== path) {
+      await this.storage.removeQuietly(LOGO_BUCKET, previous);
+    }
+    return this.toDto(saved);
+  }
+
+  private async currentForLogo(user: AuthUser): Promise<string> {
+    const institutionId = activeInstitutionId(user);
+    await this.permissions.requireInstitutionWide(
+      user,
+      institutionId,
+      INSTITUTION_PERMISSION,
+      'update',
+      'Su acceso está limitado a una sede: no puede cambiar el logo',
+    );
+    return institutionId;
+  }
+
+  private toDto(entity: InstitutionEntity): InstitutionResponseDto {
+    return InstitutionResponseDto.from(
+      entity,
+      this.storage.publicUrl(LOGO_BUCKET, entity.logoPath),
+    );
   }
 
   private async getOrFail(id: string): Promise<InstitutionEntity> {

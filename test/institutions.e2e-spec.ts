@@ -137,6 +137,7 @@ describe('Instituciones y sedes (e2e)', () => {
         passingScore: 6,
         isActive: true,
         logoPath: null,
+        logoUrl: null,
       });
 
       const id = created.body.id as string;

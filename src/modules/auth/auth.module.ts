@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
 import { JwtModule } from '@nestjs/jwt';
+import { ThrottlerGuard } from '@nestjs/throttler';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { PermissionsGuard } from '../../common/guards/permissions.guard';
@@ -31,8 +32,11 @@ import { TokenService } from './token.service';
   providers: [
     AuthService,
     TokenService,
-    // Guards globales, en este orden: primero sesión, luego permisos.
+    // Guards globales, en este orden: sesión, límite de peticiones (ya con
+    // req.user, para contar por usuario donde se pida) y permisos. Las rutas
+    // @Public (login) pasan la sesión sin coste y siguen limitadas.
     { provide: APP_GUARD, useClass: JwtAuthGuard },
+    { provide: APP_GUARD, useClass: ThrottlerGuard },
     { provide: APP_GUARD, useClass: PermissionsGuard },
   ],
   exports: [TokenService],

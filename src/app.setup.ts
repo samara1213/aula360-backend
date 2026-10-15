@@ -5,6 +5,8 @@ import * as cookieParser from 'cookie-parser';
 import helmet from 'helmet';
 import { bodyParserMiddlewares } from './common/middleware/body-parser.middleware';
 import { originCheckMiddleware } from './common/middleware/origin-check.middleware';
+import { uploadSizeMiddleware } from './common/middleware/upload-size.middleware';
+import { MULTIPART_MAX_BYTES } from './storage/storage.constants';
 
 export const API_PREFIX = 'api';
 
@@ -32,6 +34,8 @@ export function configureApp(app: INestApplication): void {
   }
 
   app.use(helmet());
+  // Subidas demasiado grandes: se rechazan sin leer el cuerpo.
+  app.use(uploadSizeMiddleware(MULTIPART_MAX_BYTES));
   app.use(...bodyParserMiddlewares());
   app.use(cookieParser());
   // CSRF: rechaza métodos que modifican datos desde orígenes no permitidos.

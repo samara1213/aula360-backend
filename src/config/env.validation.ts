@@ -89,9 +89,28 @@ export const envValidationSchema: Joi.ObjectSchema<Record<string, unknown>> =
     SMTP_PASS: Joi.string().allow('').optional(),
     MAIL_FROM: Joi.string().allow('').optional(),
 
-    // Supabase Storage (obligatorias a partir de la fase 6).
-    SUPABASE_URL: Joi.string().uri().allow('').optional(),
-    SUPABASE_SERVICE_ROLE_KEY: Joi.string().allow('').optional(),
+    // Supabase Storage. Obligatorias salvo en e2e (NODE_ENV=test usa un Storage falso).
+    // En producción solo https.
+    SUPABASE_URL: Joi.when('NODE_ENV', {
+      switch: [
+        { is: 'test', then: Joi.string().uri().allow('').optional() },
+        {
+          is: 'production',
+          then: Joi.string()
+            .uri({ scheme: ['https'] })
+            .required(),
+        },
+      ],
+      otherwise: Joi.string().uri().required(),
+    }),
+    // service_role key: solo backend, jamás en el frontend ni en logs.
+    SUPABASE_SERVICE_ROLE_KEY: Joi.string()
+      .allow('')
+      .when('NODE_ENV', {
+        is: 'test',
+        then: Joi.optional(),
+        otherwise: Joi.string().invalid('').required(),
+      }),
   });
 
 /** Para ConfigModule.forRoot({ validate }): reporta todos los errores juntos. */

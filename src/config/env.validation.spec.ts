@@ -6,6 +6,8 @@ const validEnv = {
   CORS_ORIGINS: 'http://localhost:5173,https://app.aula360.co',
   FRONTEND_URL: 'http://localhost:5173',
   JWT_ACCESS_SECRET: 'x'.repeat(64),
+  SUPABASE_URL: 'https://abc.supabase.co',
+  SUPABASE_SERVICE_ROLE_KEY: 'service-role-key',
 };
 
 /** Configuración mínima válida para producción. */
@@ -92,6 +94,35 @@ describe('validateEnv', () => {
       expect(() =>
         validateEnv({ ...prodEnv, THROTTLE_DISABLED: 'true' }),
       ).toThrow(/THROTTLE_DISABLED/);
+    });
+  });
+
+  describe('Supabase Storage', () => {
+    it('exige URL y service_role key fuera de las e2e', () => {
+      expect(() =>
+        validateEnv({
+          ...validEnv,
+          SUPABASE_URL: '',
+          SUPABASE_SERVICE_ROLE_KEY: '',
+        }),
+      ).toThrow(/SUPABASE_URL.*SUPABASE_SERVICE_ROLE_KEY/);
+    });
+
+    it('en producción exige https', () => {
+      expect(() =>
+        validateEnv({ ...prodEnv, SUPABASE_URL: 'http://abc.supabase.co' }),
+      ).toThrow(/SUPABASE_URL/);
+    });
+
+    it('en e2e (NODE_ENV=test) pueden faltar', () => {
+      expect(() =>
+        validateEnv({
+          ...validEnv,
+          NODE_ENV: 'test',
+          SUPABASE_URL: '',
+          SUPABASE_SERVICE_ROLE_KEY: '',
+        }),
+      ).not.toThrow();
     });
   });
 

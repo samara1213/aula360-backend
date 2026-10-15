@@ -1,12 +1,16 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   NotFoundException,
 } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { DataSource, QueryFailedError } from 'typeorm';
+import { AuthUser } from '../../common/interfaces/auth-user.interface';
+import { StorageService } from '../../storage/storage.service';
 import { ScoreEntity } from '../evaluations/entities/score.entity';
+import { PermissionsReader } from '../security/permissions-reader.service';
 import { InstitutionEntity } from './entities/institution.entity';
 import { InstitutionsService } from './institutions.service';
 
@@ -64,14 +68,32 @@ describe('InstitutionsService', () => {
   const dataSource = {
     transaction: jest.fn((cb: (m: typeof manager) => unknown) => cb(manager)),
   };
+  const storage = {
+    upload: jest.fn(),
+    removeQuietly: jest.fn(),
+    publicUrl: jest.fn((_bucket: string, path: string | null) =>
+      path ? `https://cdn/logos/${path}` : null,
+    ),
+  };
+  const permissions = { requireInstitutionWide: jest.fn() };
+  const admin: AuthUser = {
+    userId: 'admin-1',
+    institutionId: 'inst-1',
+    userType: 'INSTITUTION_ADMIN',
+    mustChangePassword: false,
+    sessionId: 'sid',
+  };
 
   beforeEach(async () => {
     jest.clearAllMocks();
+    storage.upload.mockResolvedValue('inst-1/logos/new.png');
     const moduleRef = await Test.createTestingModule({
       providers: [
         InstitutionsService,
         { provide: getRepositoryToken(InstitutionEntity), useValue: repo },
         { provide: DataSource, useValue: dataSource },
+        { provide: StorageService, useValue: storage },
+        { provide: PermissionsReader, useValue: permissions },
       ],
     }).compile();
     service = moduleRef.get(InstitutionsService);
@@ -222,6 +244,86 @@ describe('InstitutionsService', () => {
       repo.findOne.mockResolvedValue(institution());
       await service.setActive('inst-1', true);
       expect(repo.save).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('logo', () => {
+    const file = {
+      buffer: Buffer.from('x'),
+      mimeType: 'image/png',
+      extension: 'png',
+    };
+
+    it('sube a <institutionId>/logos, guarda la ruta y borra el anterior', async () => {
+      repo.findOne.mockResolvedValue(
+        institution({ logoPath: 'inst-1/logos/old.png' }),
+      );
+      const result = await service.replaceLogo('inst-1', file);
+      expect(storage.upload).toHaveBeenCalledWith(
+        'logos',
+        'inst-1/logos',
+        file,
+      );
+      expect(repo.findOne).toHaveBeenLastCalledWith({
+        where: { id: 'inst-1' },
+        lock: { mode: 'pessimistic_write' },
+      });
+      expect(repo.save).toHaveBeenCalledWith(
+        expect.objectContaining({ logoPath: 'inst-1/logos/new.png' }),
+      );
+      expect(storage.removeQuietly).toHaveBeenCalledWith(
+        'logos',
+        'inst-1/logos/old.png',
+      );
+      expect(result.logoUrl).toBe('https://cdn/logos/inst-1/logos/new.png');
+    });
+
+    it('404 sin subir nada si la institución no existe', async () => {
+      repo.findOne.mockResolvedValue(null);
+      await expect(service.replaceLogo('x', file)).rejects.toBeInstanceOf(
+        NotFoundException,
+      );
+      expect(storage.upload).not.toHaveBeenCalled();
+    });
+
+    it('si falla la BD borra el archivo recién subido', async () => {
+      repo.findOne.mockResolvedValue(institution());
+      repo.save.mockRejectedValueOnce(new Error('db'));
+      await expect(service.replaceLogo('inst-1', file)).rejects.toThrow('db');
+      expect(storage.removeQuietly).toHaveBeenCalledWith(
+        'logos',
+        'inst-1/logos/new.png',
+      );
+    });
+
+    it('quitar el logo deja la ruta en null y borra el archivo', async () => {
+      repo.findOne.mockResolvedValue(
+        institution({ logoPath: 'inst-1/logos/old.png' }),
+      );
+      const result = await service.removeLogo('inst-1');
+      expect(result.logoPath).toBeNull();
+      expect(result.logoUrl).toBeNull();
+      expect(storage.removeQuietly).toHaveBeenCalledWith(
+        'logos',
+        'inst-1/logos/old.png',
+      );
+    });
+
+    it('institución activa: exige el permiso en toda la institución', async () => {
+      permissions.requireInstitutionWide.mockRejectedValueOnce(
+        new ForbiddenException(),
+      );
+      await expect(
+        service.replaceCurrentLogo(admin, file),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(permissions.requireInstitutionWide).toHaveBeenCalledWith(
+        admin,
+        'inst-1',
+        'institution',
+        'update',
+        expect.any(String),
+      );
+      expect(storage.upload).not.toHaveBeenCalled();
     });
   });
 });

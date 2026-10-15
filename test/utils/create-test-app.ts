@@ -4,26 +4,36 @@ import { App } from 'supertest/types';
 import { DataSource } from 'typeorm';
 import { AppModule } from '../../src/app.module';
 import { configureApp } from '../../src/app.setup';
+import { StorageService } from '../../src/storage/storage.service';
+import { FakeStorageService } from './fake-storage';
 import { TestData } from './test-data';
 
 export interface TestContext {
   app: INestApplication<App>;
   data: TestData;
   dataSource: DataSource;
+  storage: FakeStorageService;
 }
 
-/** App igual a la de producción (configureApp) y fábrica de datos con limpieza acotada. */
+/**
+ * App igual a la de producción (configureApp) y fábrica de datos con limpieza
+ * acotada. Storage es en memoria: las e2e no suben archivos a Supabase.
+ */
 export async function createTestApp(): Promise<TestContext> {
+  const storage = new FakeStorageService();
   const moduleRef = await Test.createTestingModule({
     imports: [AppModule],
-  }).compile();
+  })
+    .overrideProvider(StorageService)
+    .useValue(storage)
+    .compile();
   const app = moduleRef.createNestApplication<INestApplication<App>>();
   configureApp(app);
   await app.init();
   const dataSource = app.get(DataSource);
   const data = new TestData(dataSource);
   await data.sweepLeftovers();
-  return { app, dataSource, data };
+  return { app, dataSource, data, storage };
 }
 
 /** Extrae las cookies Set-Cookie de una respuesta. */

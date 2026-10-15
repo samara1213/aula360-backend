@@ -15,10 +15,16 @@ export class InstitutionResponseDto {
   @ApiProperty({
     type: String,
     nullable: true,
-    description:
-      'Ruta del logo en Storage (se gestiona en la fase de archivos)',
+    description: 'Ruta del logo en Storage (bucket público logos)',
   })
   logoPath: string | null;
+
+  @ApiProperty({
+    type: String,
+    nullable: true,
+    description: 'URL pública del logo',
+  })
+  logoUrl: string | null;
 
   @ApiProperty({ example: 1 })
   gradingScaleMin: number;
@@ -38,12 +44,17 @@ export class InstitutionResponseDto {
   @ApiProperty()
   updatedAt: Date;
 
-  static from(entity: InstitutionEntity): InstitutionResponseDto {
+  /** logoUrl: URL pública calculada a partir de logoPath (StorageService.publicUrl). */
+  static from(
+    entity: InstitutionEntity,
+    logoUrl: string | null,
+  ): InstitutionResponseDto {
     return {
       id: entity.id,
       nit: entity.nit,
       name: entity.name,
       logoPath: entity.logoPath,
+      logoUrl,
       gradingScaleMin: entity.gradingScaleMin,
       gradingScaleMax: entity.gradingScaleMax,
       passingScore: entity.passingScore,

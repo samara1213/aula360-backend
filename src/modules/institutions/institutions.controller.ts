@@ -1,12 +1,15 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   ParseUUIDPipe,
   Patch,
   Post,
+  Put,
   Query,
+  UploadedFile,
 } from '@nestjs/common';
 import {
   ApiBadRequestResponse,
@@ -19,6 +22,8 @@ import {
   ApiOperation,
   ApiTags,
 } from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
+import { UPLOAD_THROTTLE } from '../../common/constants/throttle';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import {
   RequirePermission,
@@ -27,13 +32,18 @@ import {
 import { ListQueryDto } from '../../common/dto/list-query.dto';
 import type { AuthUser } from '../../common/interfaces/auth-user.interface';
 import { activeInstitutionId } from '../../common/utils/active-institution';
+import { ImageFilePipe, ValidatedFile } from '../../storage/image-file.pipe';
+import { ImageUpload } from '../../storage/image-upload.decorator';
 import { CreateInstitutionDto } from './dto/create-institution.dto';
 import {
   InstitutionPageDto,
   InstitutionResponseDto,
 } from './dto/institution-response.dto';
 import { UpdateInstitutionDto } from './dto/update-institution.dto';
-import { InstitutionsService } from './institutions.service';
+import {
+  INSTITUTION_PERMISSION,
+  InstitutionsService,
+} from './institutions.service';
 
 @ApiTags('institutions')
 @ApiCookieAuth('access_token')
@@ -44,11 +54,39 @@ export class InstitutionsController {
 
   // Va antes de ':id' para que 'current' no se interprete como id.
   @Get('current')
-  @RequirePermission('institution', 'view')
+  @RequirePermission(INSTITUTION_PERMISSION, 'view')
   @ApiOperation({ summary: 'Institución activa del usuario' })
   @ApiOkResponse({ type: InstitutionResponseDto })
   findCurrent(@CurrentUser() user: AuthUser): Promise<InstitutionResponseDto> {
     return this.institutions.findOne(activeInstitutionId(user));
+  }
+
+  @Put('current/logo')
+  @Throttle(UPLOAD_THROTTLE)
+  @RequirePermission(INSTITUTION_PERMISSION, 'update')
+  @ImageUpload()
+  @ApiOperation({
+    summary: 'Subir o cambiar el logo de la institución activa',
+    description:
+      'Requiere el permiso en toda la institución (no solo en una sede). El logo es público.',
+  })
+  @ApiOkResponse({ type: InstitutionResponseDto })
+  replaceCurrentLogo(
+    @CurrentUser() user: AuthUser,
+    @UploadedFile(ImageFilePipe) file: ValidatedFile,
+  ): Promise<InstitutionResponseDto> {
+    return this.institutions.replaceCurrentLogo(user, file);
+  }
+
+  @Delete('current/logo')
+  @Throttle(UPLOAD_THROTTLE)
+  @RequirePermission(INSTITUTION_PERMISSION, 'update')
+  @ApiOperation({ summary: 'Quitar el logo de la institución activa' })
+  @ApiOkResponse({ type: InstitutionResponseDto })
+  removeCurrentLogo(
+    @CurrentUser() user: AuthUser,
+  ): Promise<InstitutionResponseDto> {
+    return this.institutions.removeCurrentLogo(user);
   }
 
   @Get()
@@ -102,6 +140,32 @@ export class InstitutionsController {
     @Body() dto: UpdateInstitutionDto,
   ): Promise<InstitutionResponseDto> {
     return this.institutions.update(id, dto);
+  }
+
+  @Put(':id/logo')
+  @Throttle(UPLOAD_THROTTLE)
+  @SuperAdminOnly()
+  @ImageUpload()
+  @ApiOperation({ summary: 'Subir o cambiar el logo (SUPER_ADMIN)' })
+  @ApiOkResponse({ type: InstitutionResponseDto })
+  @ApiNotFoundResponse({ description: 'Institución no encontrada' })
+  replaceLogo(
+    @Param('id', ParseUUIDPipe) id: string,
+    @UploadedFile(ImageFilePipe) file: ValidatedFile,
+  ): Promise<InstitutionResponseDto> {
+    return this.institutions.replaceLogo(id, file);
+  }
+
+  @Delete(':id/logo')
+  @Throttle(UPLOAD_THROTTLE)
+  @SuperAdminOnly()
+  @ApiOperation({ summary: 'Quitar el logo (SUPER_ADMIN)' })
+  @ApiOkResponse({ type: InstitutionResponseDto })
+  @ApiNotFoundResponse({ description: 'Institución no encontrada' })
+  removeLogo(
+    @Param('id', ParseUUIDPipe) id: string,
+  ): Promise<InstitutionResponseDto> {
+    return this.institutions.removeLogo(id);
   }
 
   @Patch(':id/deactivate')
