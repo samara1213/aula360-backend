@@ -32,6 +32,7 @@ import {
 import { PasswordResetTokenEntity } from './entities/password-reset-token.entity';
 import { RefreshTokenEntity } from './entities/refresh-token.entity';
 import { TokenService } from './token.service';
+import { escapeHtml } from '../../common/utils/escape-html';
 import { ACTIVE_ASSIGNMENT_CONDITION } from '../security/active-assignment';
 
 export const INVALID_CREDENTIALS = 'Credenciales inválidas';
@@ -87,12 +88,30 @@ export class AuthService implements OnModuleInit {
     const activeInstitutionId =
       institutions.length === 1 ? institutions[0].id : null;
 
-    const tokens = await this.issueTokens(
-      this.dataSource.manager,
-      user.id,
-      activeInstitutionId,
-    );
-    await this.users.update(user.id, { lastLoginAt: new Date() });
+    // La sesión se crea con el usuario bloqueado y solo si la contraseña no
+    // cambió (ni se desactivó) mientras se comparaba: así un login con la
+    // contraseña vieja no sobrevive a un reinicio hecho en paralelo.
+    const tokens = await this.dataSource.transaction(async (manager) => {
+      const locked = await manager
+        .getRepository(UserEntity)
+        .createQueryBuilder('u')
+        .addSelect('u.passwordHash')
+        .where('u.id = :id AND u.is_active = true', { id: user.id })
+        .setLock('pessimistic_write')
+        .getOne();
+      if (!locked || locked.passwordHash !== user.passwordHash) {
+        throw new UnauthorizedException(INVALID_CREDENTIALS);
+      }
+      const issued = await this.issueTokens(
+        manager,
+        user.id,
+        activeInstitutionId,
+      );
+      await manager
+        .getRepository(UserEntity)
+        .update(user.id, { lastLoginAt: new Date() });
+      return issued;
+    });
 
     return {
       tokens,
@@ -313,7 +332,10 @@ export class AuthService implements OnModuleInit {
 
     const rawToken = this.tokens.generateOpaqueToken();
     const created = await this.dataSource.transaction(async (manager) => {
-      await this.lockActiveUser(manager, user.id);
+      // Si el email cambió en paralelo (p. ej. lo editó un administrador),
+      // no se crea el token: el enlace nunca va a un correo que ya no es suyo.
+      const locked = await this.lockActiveUser(manager, user.id);
+      if (!locked?.email || locked.email !== user.email) return false;
       const repo = manager.getRepository(PasswordResetTokenEntity);
       const recent = await repo.exists({
         where: {
@@ -478,14 +500,4 @@ export class AuthService implements OnModuleInit {
       institutions,
     };
   }
-}
-
-function escapeHtml(value: string): string {
-  return value.replace(
-    /[&<>"']/g,
-    (c) =>
-      ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[
-        c
-      ] ?? c,
-  );
 }

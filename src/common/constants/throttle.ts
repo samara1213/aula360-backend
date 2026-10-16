@@ -8,17 +8,27 @@ export const DEFAULT_THROTTLE = { ttl: 60_000, limit: 100 };
 export const STRICT_AUTH_THROTTLE = { default: { ttl: 60_000, limit: 5 } };
 
 /**
- * Límite para subir o quitar archivos: 10 por minuto por usuario (por IP si
- * aún no hay sesión). Por usuario para no bloquear a todo un colegio detrás
- * de la misma IP. Uso: @Throttle(UPLOAD_THROTTLE)
+ * Cuenta por usuario (por IP si aún no hay sesión), para no bloquear a todo un
+ * colegio detrás de la misma IP.
+ */
+const perUserTracker = (req: Record<string, unknown>): string => {
+  const user = req.user as { userId?: string } | undefined;
+  return user?.userId ? `user:${user.userId}` : `ip:${String(req.ip)}`;
+};
+
+/**
+ * Límite para subir o quitar archivos: 10 por minuto por usuario.
+ * Uso: @Throttle(UPLOAD_THROTTLE)
  */
 export const UPLOAD_THROTTLE = {
-  default: {
-    ttl: 60_000,
-    limit: 10,
-    getTracker: (req: Record<string, unknown>): string => {
-      const user = req.user as { userId?: string } | undefined;
-      return user?.userId ? `user:${user.userId}` : `ip:${String(req.ip)}`;
-    },
-  },
+  default: { ttl: 60_000, limit: 10, getTracker: perUserTracker },
+};
+
+/**
+ * Acciones administrativas sensibles (contraseñas temporales, activar o
+ * desactivar usuarios): 10 por minuto por usuario.
+ * Uso: @Throttle(SENSITIVE_ACTION_THROTTLE)
+ */
+export const SENSITIVE_ACTION_THROTTLE = {
+  default: { ttl: 60_000, limit: 10, getTracker: perUserTracker },
 };

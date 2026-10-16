@@ -35,6 +35,9 @@ function usersQb(found: Partial<UserEntity>[]) {
     where: jest.fn().mockReturnThis(),
     andWhere: jest.fn().mockReturnThis(),
     getMany: jest.fn().mockResolvedValue(found),
+    // Relectura con la fila bloqueada antes de emitir la sesión.
+    setLock: jest.fn().mockReturnThis(),
+    getOne: jest.fn().mockResolvedValue(found[0] ?? null),
   };
 }
 
@@ -162,6 +165,19 @@ describe('AuthService', () => {
       });
       expect(session.activeInstitutionId).toBeNull();
       expect(session.institutions).toHaveLength(2);
+    });
+
+    it('si la contraseña cambió mientras se comparaba, no emite la sesión', async () => {
+      compare.mockResolvedValue(true);
+      const { service, usersRepo, refreshRepo } = setup();
+      const qb = usersQb([activeUser]);
+      qb.getOne.mockResolvedValue({ ...activeUser, passwordHash: 'otro' });
+      usersRepo.createQueryBuilder.mockReturnValue(qb);
+      await expect(
+        service.login({ identifier: 'ana@colegio.co', password: 'x' }),
+      ).rejects.toThrow(new UnauthorizedException(INVALID_CREDENTIALS));
+      expect(qb.setLock).toHaveBeenCalledWith('pessimistic_write');
+      expect(refreshRepo.insert).not.toHaveBeenCalled();
     });
 
     it('si el usuario no existe igual ejecuta bcrypt.compare y responde genérico', async () => {
@@ -389,6 +405,18 @@ describe('AuthService', () => {
     it('no envía otro correo si hay una solicitud reciente (cooldown)', async () => {
       const { service, resetRepo, mail } = setup();
       resetRepo.exists.mockResolvedValue(true);
+      service.forgotPassword('ana@colegio.co');
+      await flush();
+      expect(resetRepo.insert).not.toHaveBeenCalled();
+      expect(mail.send).not.toHaveBeenCalled();
+    });
+
+    it('si el email cambió en paralelo, no crea token ni envía al correo anterior', async () => {
+      const { service, usersRepo, resetRepo, mail } = setup();
+      // 1.ª lectura (sin bloqueo): email viejo; 2.ª (bloqueada): ya cambió.
+      usersRepo.findOne
+        .mockResolvedValueOnce(activeUser)
+        .mockResolvedValueOnce({ ...activeUser, email: 'nuevo@colegio.co' });
       service.forgotPassword('ana@colegio.co');
       await flush();
       expect(resetRepo.insert).not.toHaveBeenCalled();

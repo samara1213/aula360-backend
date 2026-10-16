@@ -748,12 +748,14 @@ describe('Roles, permisos y menús (e2e)', () => {
           campusId: campusA2.id,
         })
         .expect(404);
-      // El docente pertenece a toda la institución, pero no a sus sedes.
+      // El docente pertenece a toda la institución, pero no a sus sedes. Con
+      // un rol dentro de su techo (el rol y el techo se validan antes de mirar
+      // al usuario), el usuario fuera de su alcance da 404.
       await agent
         .post('/api/role-assignments')
         .send({
           userId: teacherAUser.id,
-          roleId: globalRoles['STUDENT'],
+          roleId: users.id,
           campusId: campusA1.id,
         })
         .expect(404);

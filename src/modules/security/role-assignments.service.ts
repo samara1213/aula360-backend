@@ -96,109 +96,149 @@ export class RoleAssignmentsService {
     scope: AssignmentScope,
     dto: CreateRoleAssignmentDto,
   ): Promise<RoleAssignmentResponseDto> {
-    const { institutionId } = scope;
-    const campusId = dto.campusId ?? null;
-
-    const id = await this.dataSource.transaction(async (manager) => {
-      await this.assertInstitutionExists(manager, scope);
-
-      // Alcance por sede primero: una sede fuera de su alcance responde 404
-      // igual que una inexistente (no se revela cuáles existen).
-      const campusScope = await this.campusScope(scope, 'create');
-      if (campusScope) {
-        if (!campusId) {
-          throw new ForbiddenException(
-            'Su acceso está limitado a sedes: solo puede asignar roles en ellas',
-          );
-        }
-        if (!campusScope.includes(campusId)) {
-          throw new NotFoundException('Sede no encontrada');
-        }
-      }
-
-      const target = await manager.getRepository(UserEntity).findOne({
-        select: { id: true, userType: true },
-        where: { id: dto.userId, isActive: true },
-      });
-      // Desde una institución solo se vinculan usuarios que ya pertenecen a
-      // ella (y, con alcance por sede, a alguna de sus sedes). No se revela
-      // si el usuario existe en otra parte.
-      const visible =
-        target !== null &&
-        (scope.kind === 'system' ||
-          (await manager.getRepository(UserInstitutionRoleEntity).existsBy({
-            userId: target.id,
-            institutionId,
-            ...(campusScope ? { campusId: In(campusScope) } : {}),
-          })));
-      if (!target || !visible) {
-        throw new NotFoundException('Usuario no encontrado');
-      }
-      if (scope.kind === 'institution' && target.id === scope.user.userId) {
-        throw new ForbiddenException('No puede asignarse roles a sí mismo');
-      }
-      this.assertCanTouchUser(scope, target);
-
-      // FOR SHARE: sus permisos no cambian mientras se evalúa el techo.
-      const role = await manager.getRepository(RoleEntity).findOne({
-        where: { id: dto.roleId },
-        lock: { mode: 'pessimistic_read' },
-      });
-      if (
-        !role ||
-        (role.institutionId !== null && role.institutionId !== institutionId)
-      ) {
-        throw new NotFoundException('Rol no encontrado');
-      }
-
-      if (campusId) {
-        const campus = await manager
-          .getRepository(CampusEntity)
-          .findOne({ where: { id: campusId, institutionId } });
-        if (!campus) throw new NotFoundException('Sede no encontrada');
-        if (!campus.isActive) {
-          throw new BadRequestException('La sede está inactiva');
-        }
-      }
-
-      await this.assertRoleWithinCeiling(manager, scope, role.id, campusId);
-
-      try {
-        const result = await manager
-          .getRepository(UserInstitutionRoleEntity)
-          .insert({
-            userId: target.id,
-            institutionId,
-            roleId: role.id,
-            campusId,
-          });
-        return (result.identifiers[0] as { id: string }).id;
-      } catch (error) {
-        if (
-          error instanceof QueryFailedError &&
-          (error as QueryFailedError & { code?: string }).code === '23505'
-        ) {
-          throw new ConflictException(
-            'El usuario ya tiene ese rol en esa sede o institución',
-          );
-        }
-        if (
-          error instanceof QueryFailedError &&
-          (error as QueryFailedError & { code?: string }).code === '23503'
-        ) {
-          // El usuario, el rol o la sede se borraron en paralelo.
-          throw new NotFoundException(
-            'El usuario, el rol o la sede ya no existe',
-          );
-        }
-        throw error;
-      }
-    });
+    const id = await this.dataSource.transaction((manager) =>
+      this.insertAssignment(manager, scope, dto),
+    );
 
     const created = await this.baseQuery(this.assignments)
       .where('uir.id = :id', { id })
       .getOneOrFail();
     return RoleAssignmentResponseDto.from(created, this.isSuperAdmin(scope));
+  }
+
+  /**
+   * Valida rol, sede, alcance por sede y techo de permisos de una asignación,
+   * sin mirar todavía al usuario. Va primero: así quien no puede asignar ese
+   * rol no llega a saber si un usuario existe (ni por 404 ni por 409).
+   */
+  async validateAssignment(
+    manager: EntityManager,
+    scope: AssignmentScope,
+    roleId: string,
+    campusId: string | null,
+  ): Promise<{ role: RoleEntity; campusScope: CampusScope }> {
+    const { institutionId } = scope;
+    await this.assertInstitutionExists(manager, scope);
+
+    // Alcance por sede primero: una sede fuera de su alcance responde 404
+    // igual que una inexistente (no se revela cuáles existen).
+    const campusScope = await this.campusScope(scope, 'create');
+    if (campusScope) {
+      if (!campusId) {
+        throw new ForbiddenException(
+          'Su acceso está limitado a sedes: solo puede asignar roles en ellas',
+        );
+      }
+      if (!campusScope.includes(campusId)) {
+        throw new NotFoundException('Sede no encontrada');
+      }
+    }
+
+    // FOR SHARE: sus permisos no cambian mientras se evalúa el techo.
+    const role = await manager.getRepository(RoleEntity).findOne({
+      where: { id: roleId },
+      lock: { mode: 'pessimistic_read' },
+    });
+    if (
+      !role ||
+      (role.institutionId !== null && role.institutionId !== institutionId)
+    ) {
+      throw new NotFoundException('Rol no encontrado');
+    }
+
+    if (campusId) {
+      const campus = await manager
+        .getRepository(CampusEntity)
+        .findOne({ where: { id: campusId, institutionId } });
+      if (!campus) throw new NotFoundException('Sede no encontrada');
+      if (!campus.isActive) {
+        throw new BadRequestException('La sede está inactiva');
+      }
+    }
+
+    await this.assertRoleWithinCeiling(manager, scope, role.id, campusId);
+    return { role, campusScope };
+  }
+
+  /**
+   * Inserta la asignación dentro de la transacción del llamador, con todas las
+   * reglas (validateAssignment y, después, el usuario). Con newUser, el usuario
+   * se acaba de crear en esa misma transacción: aún no pertenece a la
+   * institución y no se exige que ya esté vinculado.
+   */
+  async insertAssignment(
+    manager: EntityManager,
+    scope: AssignmentScope,
+    dto: CreateRoleAssignmentDto,
+    { newUser = false }: { newUser?: boolean } = {},
+  ): Promise<string> {
+    const { institutionId } = scope;
+    const campusId = dto.campusId ?? null;
+    const { role, campusScope } = await this.validateAssignment(
+      manager,
+      scope,
+      dto.roleId,
+      campusId,
+    );
+
+    // FOR UPDATE sobre el usuario: se serializa con la gestión de usuarios
+    // (contraseña temporal, email, estado), que comprueba techo y exclusividad
+    // con la misma fila bloqueada.
+    const target = await manager.getRepository(UserEntity).findOne({
+      select: { id: true, userType: true },
+      where: { id: dto.userId, isActive: true },
+      lock: { mode: 'pessimistic_write' },
+    });
+    // Desde una institución solo se vinculan usuarios que ya pertenecen a
+    // ella (y, con alcance por sede, a alguna de sus sedes). No se revela
+    // si el usuario existe en otra parte.
+    const visible =
+      target !== null &&
+      (scope.kind === 'system' ||
+        newUser ||
+        (await manager.getRepository(UserInstitutionRoleEntity).existsBy({
+          userId: target.id,
+          institutionId,
+          ...(campusScope ? { campusId: In(campusScope) } : {}),
+        })));
+    if (!target || !visible) {
+      throw new NotFoundException('Usuario no encontrado');
+    }
+    if (scope.kind === 'institution' && target.id === scope.user.userId) {
+      throw new ForbiddenException('No puede asignarse roles a sí mismo');
+    }
+    this.assertCanTouchUser(scope, target);
+
+    try {
+      const result = await manager
+        .getRepository(UserInstitutionRoleEntity)
+        .insert({
+          userId: target.id,
+          institutionId,
+          roleId: role.id,
+          campusId,
+        });
+      return (result.identifiers[0] as { id: string }).id;
+    } catch (error) {
+      if (
+        error instanceof QueryFailedError &&
+        (error as QueryFailedError & { code?: string }).code === '23505'
+      ) {
+        throw new ConflictException(
+          'El usuario ya tiene ese rol en esa sede o institución',
+        );
+      }
+      if (
+        error instanceof QueryFailedError &&
+        (error as QueryFailedError & { code?: string }).code === '23503'
+      ) {
+        // El usuario, el rol o la sede se borraron en paralelo.
+        throw new NotFoundException(
+          'El usuario, el rol o la sede ya no existe',
+        );
+      }
+      throw error;
+    }
   }
 
   /** Quita la asignación; el acceso se pierde en la siguiente petición. */
@@ -208,7 +248,6 @@ export class RoleAssignmentsService {
       const repo = manager.getRepository(UserInstitutionRoleEntity);
       const assignment = await repo.findOne({
         where: { id, institutionId: scope.institutionId },
-        relations: { user: true },
       });
       const campusScope = await this.campusScope(scope, 'delete');
       if (
@@ -223,7 +262,13 @@ export class RoleAssignmentsService {
           'No puede quitarse sus propias asignaciones',
         );
       }
-      this.assertCanTouchUser(scope, assignment.user);
+      // FOR UPDATE: se serializa con la gestión de usuarios (exclusividad).
+      const user = await manager.getRepository(UserEntity).findOneOrFail({
+        select: { id: true, userType: true },
+        where: { id: assignment.userId },
+        lock: { mode: 'pessimistic_write' },
+      });
+      this.assertCanTouchUser(scope, user);
       await this.assertRoleWithinCeiling(
         manager,
         scope,

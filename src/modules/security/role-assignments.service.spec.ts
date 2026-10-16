@@ -42,7 +42,7 @@ const dto = { userId: 'target-1', roleId: 'role-1' };
 describe('RoleAssignmentsService', () => {
   let service: RoleAssignmentsService;
 
-  const userRepo = { findOne: jest.fn() };
+  const userRepo = { findOne: jest.fn(), findOneOrFail: jest.fn() };
   const roleRepo = { findOne: jest.fn() };
   const campusRepo = { findOne: jest.fn() };
   const institutionRepo = { existsBy: jest.fn() };
@@ -98,6 +98,10 @@ describe('RoleAssignmentsService', () => {
   beforeEach(async () => {
     jest.clearAllMocks();
     userRepo.findOne.mockResolvedValue({ id: 'target-1', userType: 'TEACHER' });
+    userRepo.findOneOrFail.mockResolvedValue({
+      id: 'target-1',
+      userType: 'TEACHER',
+    });
     assignmentRepo.existsBy.mockResolvedValue(true);
     roleRepo.findOne.mockResolvedValue({ id: 'role-1', institutionId: null });
     institutionRepo.existsBy.mockResolvedValue(true);
@@ -136,6 +140,22 @@ describe('RoleAssignmentsService', () => {
         NotFoundException,
       );
       expect(assignmentRepo.insert).not.toHaveBeenCalled();
+    });
+
+    it('insertAssignment con newUser no exige pertenencia previa, pero sí el techo', async () => {
+      assignmentRepo.existsBy.mockResolvedValue(false);
+      const id = await service.insertAssignment(
+        manager as never,
+        institution,
+        dto,
+        { newUser: true },
+      );
+      expect(id).toBe('uir-1');
+      expect(assignmentRepo.existsBy).not.toHaveBeenCalled();
+      expect(userRepo.findOne).toHaveBeenCalledWith(
+        expect.objectContaining({ lock: { mode: 'pessimistic_write' } }),
+      );
+      expect(permissions.assertWithinCeiling).toHaveBeenCalled();
     });
 
     it('el SUPER_ADMIN vincula a cualquier usuario activo, sin techo', async () => {
@@ -291,9 +311,12 @@ describe('RoleAssignmentsService', () => {
       );
     });
 
-    it('quita la asignación aplicando el techo del rol', async () => {
+    it('quita la asignación aplicando el techo del rol, con el usuario bloqueado', async () => {
       assignmentRepo.findOne.mockResolvedValue(assignment);
       await service.remove(institution, 'uir-1');
+      expect(userRepo.findOneOrFail).toHaveBeenCalledWith(
+        expect.objectContaining({ lock: { mode: 'pessimistic_write' } }),
+      );
       expect(permissions.assertWithinCeiling).toHaveBeenCalled();
       expect(assignmentRepo.delete).toHaveBeenCalledWith({ id: 'uir-1' });
     });

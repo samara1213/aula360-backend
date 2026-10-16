@@ -44,6 +44,6 @@ import { RolesService } from './roles.service';
     RolesService,
     RoleAssignmentsService,
   ],
-  exports: [PermissionsReader],
+  exports: [PermissionsReader, RoleAssignmentsService],
 })
 export class SecurityModule {}

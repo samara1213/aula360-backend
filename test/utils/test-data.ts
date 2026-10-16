@@ -129,6 +129,11 @@ export class TestData {
     this.institutionIds.push(id);
   }
 
+  /** Registra un usuario creado por la API para borrarlo en cleanup(). */
+  trackUser(id: string): void {
+    this.userIds.push(id);
+  }
+
   /** Crea un token de recuperación conocido (el real solo llega por correo). */
   async createResetToken(
     userId: string,
