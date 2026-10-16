@@ -32,3 +32,12 @@ export const UPLOAD_THROTTLE = {
 export const SENSITIVE_ACTION_THROTTLE = {
   default: { ttl: 60_000, limit: 10, getTracker: perUserTracker },
 };
+
+/**
+ * Listados de personas (docentes, estudiantes): 60 por minuto por usuario.
+ * Frena la descarga masiva del padrón paginando.
+ * Uso: @Throttle(PEOPLE_LIST_THROTTLE)
+ */
+export const PEOPLE_LIST_THROTTLE = {
+  default: { ttl: 60_000, limit: 60, getTracker: perUserTracker },
+};

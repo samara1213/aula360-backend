@@ -22,6 +22,7 @@ import {
 import { AuthUser } from '../../common/interfaces/auth-user.interface';
 import { CampusEntity } from '../institutions/entities/campus.entity';
 import { InstitutionEntity } from '../institutions/entities/institution.entity';
+import { StudentEntity } from '../users/entities/student.entity';
 import { UserEntity } from '../users/entities/user.entity';
 import { CreateRoleAssignmentDto } from './dto/create-role-assignment.dto';
 import { RoleAssignmentQueryDto } from './dto/role-assignment-query.dto';
@@ -38,10 +39,22 @@ export const ASSIGNMENT_PERMISSION = 'security.users';
  * institution: la institución activa del token, con las reglas del
  * administrador (usuarios ya vinculados, alcance por sede, techo de permisos).
  * system: el SUPER_ADMIN sobre cualquier institución (p. ej. su primer administrador).
+ * permission: slug de menú con el que se calcula el alcance por sede
+ * (por defecto security.users; /teachers y /students usan el suyo).
  */
 export type AssignmentScope =
-  | { kind: 'institution'; user: AuthUser; institutionId: string }
-  | { kind: 'system'; user: AuthUser; institutionId: string };
+  | {
+      kind: 'institution';
+      user: AuthUser;
+      institutionId: string;
+      permission?: string;
+    }
+  | {
+      kind: 'system';
+      user: AuthUser;
+      institutionId: string;
+      permission?: string;
+    };
 
 @Injectable()
 export class RoleAssignmentsService {
@@ -208,6 +221,9 @@ export class RoleAssignmentsService {
       throw new ForbiddenException('No puede asignarse roles a sí mismo');
     }
     this.assertCanTouchUser(scope, target);
+    if (!newUser) {
+      await this.assertNotStudentProfileRole(manager, scope, target.id, role);
+    }
 
     try {
       const result = await manager
@@ -269,6 +285,10 @@ export class RoleAssignmentsService {
         lock: { mode: 'pessimistic_write' },
       });
       this.assertCanTouchUser(scope, user);
+      const role = await manager
+        .getRepository(RoleEntity)
+        .findOneByOrFail({ id: assignment.roleId });
+      await this.assertNotStudentProfileRole(manager, scope, user.id, role);
       await this.assertRoleWithinCeiling(
         manager,
         scope,
@@ -317,6 +337,28 @@ export class RoleAssignmentsService {
   }
 
   /**
+   * El rol STUDENT de quien tiene perfil de estudiante en la institución va
+   * atado a la sede del perfil: se gestiona solo desde /students (que mueve
+   * ambos a la vez). Así el perfil y el rol nunca quedan en sedes distintas.
+   */
+  private async assertNotStudentProfileRole(
+    manager: EntityManager,
+    scope: AssignmentScope,
+    userId: string,
+    role: Pick<RoleEntity, 'name' | 'institutionId'>,
+  ): Promise<void> {
+    if (role.name !== 'STUDENT' || role.institutionId !== null) return;
+    const hasProfile = await manager
+      .getRepository(StudentEntity)
+      .existsBy({ userId, institutionId: scope.institutionId });
+    if (hasProfile) {
+      throw new ConflictException(
+        'El rol STUDENT de un estudiante se gestiona desde /students',
+      );
+    }
+  }
+
+  /**
    * No se puede asignar ni quitar un rol con permisos que quien actúa no tiene
    * en ese mismo alcance (la sede de la asignación, o toda la institución).
    */
@@ -346,7 +388,7 @@ export class RoleAssignmentsService {
     return this.permissions.campusScope(
       scope.user.userId,
       scope.institutionId,
-      ASSIGNMENT_PERMISSION,
+      scope.permission ?? ASSIGNMENT_PERMISSION,
       action,
     );
   }

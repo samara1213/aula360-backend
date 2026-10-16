@@ -52,6 +52,8 @@ import {
   TemporaryPasswordResponseDto,
   UserResponseDto,
 } from './dto/user-response.dto';
+import { StudentEntity } from './entities/student.entity';
+import { TeacherEntity } from './entities/teacher.entity';
 import { UserEntity } from './entities/user.entity';
 import { generateTemporaryPassword } from './temporary-password';
 import { UsersService } from './users.service';
@@ -180,53 +182,87 @@ export class ManagedUsersService {
     scope: UsersScope,
     dto: CreateUserDto,
   ): Promise<CreatedUserResponseDto> {
-    const temporaryPassword = generateTemporaryPassword();
-    const passwordHash = await bcrypt.hash(temporaryPassword, BCRYPT_COST);
-
-    const campusId = dto.campusId ?? null;
-    const userId = await this.dataSource.transaction(async (manager) => {
-      // Rol, sede, alcance y techo antes de insertar: quien no puede crear con
-      // ese rol no llega a saber si el documento o el email ya existen (409).
-      const { campusScope } = await this.assignments.validateAssignment(
-        manager,
-        scope,
-        dto.roleId,
-        campusId,
-      );
-      if (dto.userType === 'INSTITUTION_ADMIN' && campusScope) {
-        throw new ForbiddenException(
-          'Para crear administradores necesita alcance en toda la institución',
-        );
-      }
-      const id = await this.insertUser(manager, {
-        userType: dto.userType,
-        documentType: dto.documentType,
-        documentNumber: dto.documentNumber,
-        firstName: dto.firstName,
-        lastName: dto.lastName,
-        email: dto.email ?? null,
-        phone: dto.phone ?? null,
-        passwordHash,
-        mustChangePassword: true,
-        isActive: true,
-      });
-      await this.assignments.insertAssignment(
-        manager,
-        scope,
-        { userId: id, roleId: dto.roleId, campusId },
-        { newUser: true },
-      );
-      return id;
+    const { password, hash } = await this.newTemporaryPassword();
+    const userId = await this.dataSource.transaction((manager) =>
+      this.insertUserWithAssignment(manager, scope, dto, hash),
+    );
+    const user = await this.afterCreate(scope, userId, password, {
+      roleId: dto.roleId,
+      campusId: dto.campusId ?? null,
     });
+    const response = await this.toResponse(
+      this.dataSource.manager,
+      scope,
+      null,
+      user,
+    );
+    return { ...response, temporaryPassword: password };
+  }
 
-    const manager = this.dataSource.manager;
-    const user = await manager
+  /** Contraseña temporal y su hash (bcrypt va fuera de la transacción). */
+  async newTemporaryPassword(): Promise<{ password: string; hash: string }> {
+    const password = generateTemporaryPassword();
+    return { password, hash: await bcrypt.hash(password, BCRYPT_COST) };
+  }
+
+  /**
+   * Dentro de la transacción del llamador: valida la asignación (rol, sede,
+   * alcance y techo) ANTES de insertar —quien no puede crear con ese rol no
+   * llega a saber si el documento o el email ya existen (409)— y crea el
+   * usuario con su primera asignación. También lo usan los perfiles (fase 7b).
+   */
+  async insertUserWithAssignment(
+    manager: EntityManager,
+    scope: UsersScope,
+    dto: CreateUserDto,
+    passwordHash: string,
+  ): Promise<string> {
+    const campusId = dto.campusId ?? null;
+    const { campusScope } = await this.assignments.validateAssignment(
+      manager,
+      scope,
+      dto.roleId,
+      campusId,
+    );
+    if (dto.userType === 'INSTITUTION_ADMIN' && campusScope) {
+      throw new ForbiddenException(
+        'Para crear administradores necesita alcance en toda la institución',
+      );
+    }
+    const id = await this.insertUser(manager, {
+      userType: dto.userType,
+      documentType: dto.documentType,
+      documentNumber: dto.documentNumber,
+      firstName: dto.firstName,
+      lastName: dto.lastName,
+      email: dto.email ?? null,
+      phone: dto.phone ?? null,
+      passwordHash,
+      mustChangePassword: true,
+      isActive: true,
+    });
+    await this.assignments.insertAssignment(
+      manager,
+      scope,
+      { userId: id, roleId: dto.roleId, campusId },
+      { newUser: true },
+    );
+    return id;
+  }
+
+  /** Después del commit: auditoría y correo con la contraseña temporal. */
+  async afterCreate(
+    scope: UsersScope,
+    userId: string,
+    temporaryPassword: string,
+    details: Record<string, unknown>,
+  ): Promise<UserEntity> {
+    const user = await this.dataSource.manager
       .getRepository(UserEntity)
       .findOneByOrFail({ id: userId });
-    this.audit(scope, 'user.created', userId, { roleId: dto.roleId, campusId });
+    this.audit(scope, 'user.created', userId, details);
     this.sendTemporaryPassword(user, temporaryPassword, 'created');
-    const response = await this.toResponse(manager, scope, null, user);
-    return { ...response, temporaryPassword };
+    return user;
   }
 
   async update(
@@ -235,7 +271,6 @@ export class ManagedUsersService {
     dto: UpdateUserDto,
   ): Promise<UserResponseDto> {
     rejectNullFields(dto, USER_NOT_NULL_FIELDS);
-
     await this.dataSource.transaction(async (manager) => {
       await this.assertInstitutionExists(manager, scope);
       const { user, campusScope } = await this.findVisible(
@@ -245,43 +280,57 @@ export class ManagedUsersService {
         'update',
         { lock: true },
       );
-      await this.assertCanManage(manager, scope, user);
-
-      const emailChanged = dto.email !== undefined && dto.email !== user.email;
-      const documentChanged =
-        (dto.documentType !== undefined &&
-          dto.documentType !== user.documentType) ||
-        (dto.documentNumber !== undefined &&
-          dto.documentNumber !== user.documentNumber);
-      if (emailChanged && !this.isSuperAdmin(scope)) {
-        throw new ForbiddenException(SUPER_ADMIN_ONLY);
-      }
-      if (documentChanged) {
-        await this.assertExclusive(manager, scope, user.id, campusScope);
-      }
-
-      const changes: Partial<UserEntity> = {};
-      if (dto.firstName !== undefined) changes.firstName = dto.firstName;
-      if (dto.lastName !== undefined) changes.lastName = dto.lastName;
-      if (dto.phone !== undefined) changes.phone = dto.phone;
-      if (emailChanged) changes.email = dto.email ?? null;
-      if (dto.documentType !== undefined) {
-        changes.documentType = dto.documentType;
-      }
-      if (dto.documentNumber !== undefined) {
-        changes.documentNumber = dto.documentNumber;
-      }
-      if (Object.keys(changes).length === 0) return;
-
-      await this.saveUserChanges(manager, user.id, changes);
-      // Un enlace de recuperación enviado al correo anterior deja de servir.
-      if (emailChanged) await this.invalidateResetTokens(manager, user.id);
-      this.audit(scope, 'user.updated', user.id, {
-        fields: Object.keys(changes),
-      });
+      await this.applyPersonalChanges(manager, scope, user, campusScope, dto);
     });
-
     return this.findOne(scope, id);
+  }
+
+  /**
+   * Dentro de la transacción del llamador y con el usuario ya bloqueado
+   * (FOR UPDATE): reglas de gestión (techo, autogestión) y cambios de datos
+   * personales (email solo SUPER_ADMIN; documento con exclusividad). Se llama
+   * aunque no haya datos personales que cambiar: también protege los perfiles.
+   */
+  async applyPersonalChanges(
+    manager: EntityManager,
+    scope: UsersScope,
+    user: UserEntity,
+    campusScope: CampusScope,
+    dto: UpdateUserDto,
+  ): Promise<void> {
+    rejectNullFields(dto, USER_NOT_NULL_FIELDS);
+    await this.assertCanManage(manager, scope, user);
+
+    const emailChanged = dto.email !== undefined && dto.email !== user.email;
+    const documentChanged =
+      (dto.documentType !== undefined &&
+        dto.documentType !== user.documentType) ||
+      (dto.documentNumber !== undefined &&
+        dto.documentNumber !== user.documentNumber);
+    if (emailChanged && !this.isSuperAdmin(scope)) {
+      throw new ForbiddenException(SUPER_ADMIN_ONLY);
+    }
+    if (documentChanged) {
+      await this.assertExclusive(manager, scope, user.id, campusScope);
+    }
+
+    const changes: Partial<UserEntity> = {};
+    if (dto.firstName !== undefined) changes.firstName = dto.firstName;
+    if (dto.lastName !== undefined) changes.lastName = dto.lastName;
+    if (dto.phone !== undefined) changes.phone = dto.phone;
+    if (emailChanged) changes.email = dto.email ?? null;
+    if (dto.documentType !== undefined) changes.documentType = dto.documentType;
+    if (dto.documentNumber !== undefined) {
+      changes.documentNumber = dto.documentNumber;
+    }
+    if (Object.keys(changes).length === 0) return;
+
+    await this.saveUserChanges(manager, user.id, changes);
+    // Un enlace de recuperación enviado al correo anterior deja de servir.
+    if (emailChanged) await this.invalidateResetTokens(manager, user.id);
+    this.audit(scope, 'user.updated', user.id, {
+      fields: Object.keys(changes),
+    });
   }
 
   /** Desactivar cierra todas sus sesiones (pierde el acceso en la siguiente petición). */
@@ -410,7 +459,12 @@ export class ManagedUsersService {
       select: { roleId: true, campusId: true },
       where: { userId: target.id, institutionId: scope.institutionId },
     });
-    if (held.length === 0) return;
+    if (held.length === 0) {
+      // Ya no pertenece a la institución (p. ej. le quitaron sus roles y solo
+      // le queda un perfil): desde aquí no se gestiona. Nunca sin techo.
+      if (this.isSuperAdmin(scope)) return;
+      throw new NotFoundException('Usuario no encontrado');
+    }
     // FOR SHARE sobre sus roles: los permisos no cambian mientras se evalúa
     // el techo (las asignaciones ya están fijas por el bloqueo del usuario).
     await manager.getRepository(RoleEntity).find({
@@ -468,7 +522,23 @@ export class ManagedUsersService {
         institutionId: scope.institutionId,
       });
     }
-    if (await outside.getExists()) {
+    // Un perfil de docente o estudiante en otra institución también cuenta.
+    const otherProfile = async (
+      entity: typeof TeacherEntity | typeof StudentEntity,
+    ) =>
+      manager
+        .getRepository(entity)
+        .createQueryBuilder('p')
+        .where('p.user_id = :userId AND p.institution_id <> :institutionId', {
+          userId,
+          institutionId: scope.institutionId,
+        })
+        .getExists();
+    if (
+      (await outside.getExists()) ||
+      (await otherProfile(TeacherEntity)) ||
+      (await otherProfile(StudentEntity))
+    ) {
       throw new ForbiddenException(SUPER_ADMIN_ONLY);
     }
   }
@@ -623,7 +693,7 @@ export class ManagedUsersService {
     return this.permissions.campusScope(
       scope.user.userId,
       scope.institutionId,
-      USERS_PERMISSION,
+      scope.permission ?? USERS_PERMISSION,
       action,
     );
   }

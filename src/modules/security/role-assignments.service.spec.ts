@@ -10,6 +10,7 @@ import { DataSource, In, QueryFailedError } from 'typeorm';
 import { AuthUser } from '../../common/interfaces/auth-user.interface';
 import { CampusEntity } from '../institutions/entities/campus.entity';
 import { InstitutionEntity } from '../institutions/entities/institution.entity';
+import { StudentEntity } from '../users/entities/student.entity';
 import { UserEntity } from '../users/entities/user.entity';
 import { RoleMenuPermissionEntity } from './entities/role-menu-permission.entity';
 import { RoleEntity } from './entities/role.entity';
@@ -43,7 +44,8 @@ describe('RoleAssignmentsService', () => {
   let service: RoleAssignmentsService;
 
   const userRepo = { findOne: jest.fn(), findOneOrFail: jest.fn() };
-  const roleRepo = { findOne: jest.fn() };
+  const roleRepo = { findOne: jest.fn(), findOneByOrFail: jest.fn() };
+  const studentRepo = { existsBy: jest.fn() };
   const campusRepo = { findOne: jest.fn() };
   const institutionRepo = { existsBy: jest.fn() };
   const permRepo = { find: jest.fn().mockResolvedValue([]) };
@@ -60,6 +62,7 @@ describe('RoleAssignmentsService', () => {
     [InstitutionEntity, institutionRepo],
     [RoleMenuPermissionEntity, permRepo],
     [UserInstitutionRoleEntity, assignmentRepo],
+    [StudentEntity, studentRepo],
   ]);
   const manager = { getRepository: jest.fn((e: unknown) => repos.get(e)) };
   const dataSource = {
@@ -104,6 +107,12 @@ describe('RoleAssignmentsService', () => {
     });
     assignmentRepo.existsBy.mockResolvedValue(true);
     roleRepo.findOne.mockResolvedValue({ id: 'role-1', institutionId: null });
+    roleRepo.findOneByOrFail.mockResolvedValue({
+      id: 'role-1',
+      name: 'TEACHER',
+      institutionId: null,
+    });
+    studentRepo.existsBy.mockResolvedValue(false);
     institutionRepo.existsBy.mockResolvedValue(true);
     assignmentRepo.insert.mockResolvedValue({ identifiers: [{ id: 'uir-1' }] });
     permissions.campusScope.mockResolvedValue(null);
@@ -319,6 +328,54 @@ describe('RoleAssignmentsService', () => {
       );
       expect(permissions.assertWithinCeiling).toHaveBeenCalled();
       expect(assignmentRepo.delete).toHaveBeenCalledWith({ id: 'uir-1' });
+    });
+
+    it('el rol STUDENT de quien tiene perfil de estudiante: 409 (va por /students)', async () => {
+      assignmentRepo.findOne.mockResolvedValue(assignment);
+      roleRepo.findOneByOrFail.mockResolvedValue({
+        id: 'role-1',
+        name: 'STUDENT',
+        institutionId: null,
+      });
+      studentRepo.existsBy.mockResolvedValue(true);
+      await expect(service.remove(institution, 'uir-1')).rejects.toBeInstanceOf(
+        ConflictException,
+      );
+      expect(studentRepo.existsBy).toHaveBeenCalledWith({
+        userId: 'target-1',
+        institutionId: 'inst-A',
+      });
+      expect(assignmentRepo.delete).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('rol STUDENT de un estudiante', () => {
+    beforeEach(() => {
+      roleRepo.findOne.mockResolvedValue({
+        id: 'role-1',
+        name: 'STUDENT',
+        institutionId: null,
+      });
+      userRepo.findOne.mockResolvedValue({
+        id: 'target-1',
+        userType: 'STUDENT',
+      });
+    });
+
+    it('no se asigna desde aquí si tiene perfil de estudiante (409)', async () => {
+      studentRepo.existsBy.mockResolvedValue(true);
+      await expect(service.create(institution, dto)).rejects.toBeInstanceOf(
+        ConflictException,
+      );
+      expect(assignmentRepo.insert).not.toHaveBeenCalled();
+    });
+
+    it('al crear el usuario en la misma transacción no se consulta', async () => {
+      assignmentRepo.insert.mockResolvedValue({ identifiers: [{ id: 'n' }] });
+      await service.insertAssignment(manager as never, institution, dto, {
+        newUser: true,
+      });
+      expect(studentRepo.existsBy).not.toHaveBeenCalled();
     });
   });
 

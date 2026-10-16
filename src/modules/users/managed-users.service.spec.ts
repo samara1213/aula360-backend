@@ -17,6 +17,8 @@ import { RoleEntity } from '../security/entities/role.entity';
 import { UserInstitutionRoleEntity } from '../security/entities/user-institution-role.entity';
 import { PermissionsReader } from '../security/permissions-reader.service';
 import { RoleAssignmentsService } from '../security/role-assignments.service';
+import { StudentEntity } from './entities/student.entity';
+import { TeacherEntity } from './entities/teacher.entity';
 import { UserEntity } from './entities/user.entity';
 import { ManagedUsersService, UsersScope } from './managed-users.service';
 import { UsersService } from './users.service';
@@ -90,6 +92,12 @@ describe('ManagedUsersService', () => {
   const refreshRepo = { delete: jest.fn() };
   const resetRepo = { update: jest.fn() };
   const institutionRepo = { existsBy: jest.fn() };
+  /** Perfiles de docente o estudiante en otra institución (exclusividad, B5). */
+  const profileQb = {
+    where: jest.fn().mockReturnThis(),
+    getExists: jest.fn(),
+  };
+  const profileRepo = { createQueryBuilder: jest.fn(() => profileQb) };
   const roleRepo = { find: jest.fn() };
   const repos = new Map<unknown, unknown>([
     [UserEntity, userRepo],
@@ -99,6 +107,8 @@ describe('ManagedUsersService', () => {
     [PasswordResetTokenEntity, resetRepo],
     [InstitutionEntity, institutionRepo],
     [RoleEntity, roleRepo],
+    [TeacherEntity, profileRepo],
+    [StudentEntity, profileRepo],
   ]);
   const manager = { getRepository: jest.fn((e: unknown) => repos.get(e)) };
   const dataSource = {
@@ -123,7 +133,10 @@ describe('ManagedUsersService', () => {
     permissions.assertWithinCeiling.mockResolvedValue(undefined);
     membersQb.getOne.mockResolvedValue(target());
     outsideQb.getExists.mockResolvedValue(false);
-    assignmentRepo.find.mockResolvedValue([]);
+    profileQb.getExists.mockResolvedValue(false);
+    assignmentRepo.find.mockResolvedValue([
+      { roleId: 'role-1', campusId: null },
+    ]);
     institutionRepo.existsBy.mockResolvedValue(true);
     userRepo.insert.mockResolvedValue({ identifiers: [{ id: 'user-1' }] });
     userRepo.findOneByOrFail.mockResolvedValue(target());
@@ -320,6 +333,39 @@ describe('ManagedUsersService', () => {
         expect.stringContaining('uir.campus_id NOT IN (:...campusScope)'),
         { institutionId: 'inst-A', campusScope: ['campus-1'] },
       );
+    });
+
+    it('un perfil de docente o estudiante en otra institución también rompe la exclusividad', async () => {
+      profileQb.getExists.mockResolvedValue(true);
+      await expect(
+        service.setStatus(institution, 'user-1', { isActive: false }),
+      ).rejects.toThrow('Este cambio solo lo puede hacer un SUPER_ADMIN');
+      expect(profileQb.where).toHaveBeenCalledWith(
+        'p.user_id = :userId AND p.institution_id <> :institutionId',
+        { userId: 'user-1', institutionId: 'inst-A' },
+      );
+    });
+
+    it('el alcance por sede se calcula con el permiso del alcance (perfiles)', async () => {
+      await service.findOne(
+        { ...institution, permission: 'people.students' },
+        'user-1',
+      );
+      expect(permissions.campusScope).toHaveBeenCalledWith(
+        'admin-1',
+        'inst-A',
+        'people.students',
+        'view',
+      );
+    });
+
+    it('sin asignaciones en la institución: 404 (nunca se gestiona sin techo)', async () => {
+      assignmentRepo.find.mockResolvedValue([]);
+      await expect(
+        service.setStatus(institution, 'user-1', { isActive: false }),
+      ).rejects.toThrow(NotFoundException);
+      expect(permissions.assertWithinCeiling).not.toHaveBeenCalled();
+      expect(userRepo.update).not.toHaveBeenCalled();
     });
 
     it('el SUPER_ADMIN no está sujeto a exclusividad ni al techo', async () => {

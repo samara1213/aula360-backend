@@ -9,6 +9,8 @@ import { MenuOptionEntity } from '../../src/modules/security/entities/menu-optio
 import { RoleMenuPermissionEntity } from '../../src/modules/security/entities/role-menu-permission.entity';
 import { RoleEntity } from '../../src/modules/security/entities/role.entity';
 import { UserInstitutionRoleEntity } from '../../src/modules/security/entities/user-institution-role.entity';
+import { StudentEntity } from '../../src/modules/users/entities/student.entity';
+import { TeacherEntity } from '../../src/modules/users/entities/teacher.entity';
 import {
   UserEntity,
   UserType,
@@ -161,6 +163,14 @@ export class TestData {
    */
   async sweepLeftovers(): Promise<void> {
     await this.ds.transaction(async (m) => {
+      // Perfiles (FK RESTRICT a users e institutions) antes que todo lo demás.
+      for (const table of ['teachers', 'students']) {
+        await m.query(
+          `DELETE FROM ${table}
+            WHERE user_id IN (SELECT id FROM users WHERE document_number LIKE 'E2E%' AND (email IS NULL OR email LIKE 'e2e-%@test.aula360.local'))
+               OR institution_id IN (SELECT id FROM institutions WHERE nit LIKE 'E2E-%')`,
+        );
+      }
       await m.query(
         `DELETE FROM user_institution_roles
           WHERE user_id IN (SELECT id FROM users WHERE document_number LIKE 'E2E%' AND email LIKE 'e2e-%@test.aula360.local')
@@ -187,6 +197,19 @@ export class TestData {
   async cleanup(): Promise<void> {
     await this.ds.transaction(async (m) => {
       if (this.userIds.length || this.institutionIds.length) {
+        const owned = {
+          u: this.userIds.length ? this.userIds : [null],
+          i: this.institutionIds.length ? this.institutionIds : [null],
+        };
+        // Perfiles (FK RESTRICT a users e institutions) antes que los usuarios.
+        for (const entity of [TeacherEntity, StudentEntity]) {
+          await m
+            .getRepository(entity)
+            .createQueryBuilder()
+            .delete()
+            .where('user_id IN (:...u) OR institution_id IN (:...i)', owned)
+            .execute();
+        }
         await m
           .getRepository(UserInstitutionRoleEntity)
           .createQueryBuilder()

@@ -8,6 +8,9 @@ import {
   ManagedUsersController,
 } from './managed-users.controller';
 import { ManagedUsersService } from './managed-users.service';
+import { StudentsController, TeachersController } from './profiles.controller';
+import { StudentsService } from './students.service';
+import { TeachersService } from './teachers.service';
 import { UsersController } from './users.controller';
 import { UsersService } from './users.service';
 
@@ -19,7 +22,14 @@ import { UsersService } from './users.service';
     UsersController,
     ManagedUsersController,
     InstitutionUsersController,
+    TeachersController,
+    StudentsController,
   ],
-  providers: [UsersService, ManagedUsersService],
+  providers: [
+    UsersService,
+    ManagedUsersService,
+    TeachersService,
+    StudentsService,
+  ],
 })
 export class UsersModule {}
