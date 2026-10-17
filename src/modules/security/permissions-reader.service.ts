@@ -119,12 +119,15 @@ export class PermissionsReader {
    * Alcance por sede según las asignaciones vigentes cuyo rol tiene el permiso
    * y la acción pedidos. Así, un rol sin el permiso pero sin sede no amplía el
    * alcance de otro rol que sí lo tiene pero está limitado a una sede.
+   * excludeGlobalRole: no cuenta las asignaciones de ese rol global (p. ej.
+   * el alcance que dan los demás roles de un docente, sin su rol TEACHER).
    */
   async campusScope(
     userId: string,
     institutionId: string,
     slug: string,
     action: PermissionAction,
+    { excludeGlobalRole }: { excludeGlobalRole?: string } = {},
   ): Promise<CampusScope> {
     const qb = this.memberships
       .createQueryBuilder('uir')
@@ -148,6 +151,11 @@ export class PermissionsReader {
       .andWhere(ACTIVE_ASSIGNMENT_CONDITION);
     if (action !== 'view') {
       qb.andWhere(`p.${ACTION_COLUMN[action]} = true`);
+    }
+    if (excludeGlobalRole) {
+      qb.andWhere('NOT (r.institution_id IS NULL AND r.name = :excluded)', {
+        excluded: excludeGlobalRole,
+      });
     }
     const rows = await qb.getRawMany<{ campusId: string | null }>();
     if (rows.some((r) => r.campusId === null)) return null;

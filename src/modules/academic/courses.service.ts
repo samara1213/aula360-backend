@@ -179,6 +179,27 @@ export class CoursesService {
     });
   }
 
+  /**
+   * Para la carga académica y las matrículas (hallazgo M1 de la fase 8a):
+   * curso de la institución (y de sus sedes, si aplica) leído FOR SHARE dentro
+   * de la transacción del llamador. Se serializa con el cambio de grado, sede
+   * o año del curso (FOR UPDATE), que comprueba que no tenga carga ni matrículas.
+   */
+  async lockForUse(
+    manager: EntityManager,
+    institutionId: string,
+    campusScope: CampusScope,
+    id: string,
+  ): Promise<CourseEntity> {
+    const course = await this.baseQuery(manager, institutionId, campusScope)
+      .andWhere('c.id = :id', { id })
+      // FOR SHARE también del año: no se desactiva mientras se usa (B5, fase 8b).
+      .setLock('pessimistic_read', undefined, ['c', 'y'])
+      .getOne();
+    if (!course) throw new NotFoundException('Curso no encontrado');
+    return course;
+  }
+
   /** Solo si no tiene carga académica, matrículas ni boletines: 409 si no. */
   async remove(user: AuthUser, id: string): Promise<void> {
     const institutionId = activeInstitutionId(user);

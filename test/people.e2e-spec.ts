@@ -38,7 +38,8 @@ describe('Docentes y estudiantes (e2e)', () => {
   let adminA: Agent;
   let adminB: Agent;
   let campusAdminA: Agent; // INSTITUTION_ADMIN limitado a campusA1
-  let teacherA: Agent; // rol TEACHER: ve estudiantes, no docentes
+  let teacherA: Agent;
+  let teacherAUserId: string; // rol TEACHER: ve estudiantes, no docentes
 
   let studentRoleId: string;
   let teacherRoleId: string;
@@ -100,6 +101,7 @@ describe('Docentes y estudiantes (e2e)', () => {
     );
     const teacherUser = await data.createUser({ userType: 'TEACHER' });
     await data.assignGlobalRole(teacherUser.id, institutionA.id, 'TEACHER');
+    teacherAUserId = teacherUser.id;
 
     studentRoleId = (
       await ctx.dataSource
@@ -346,6 +348,47 @@ describe('Docentes y estudiantes (e2e)', () => {
     });
 
     it('el docente (solo ver) recibe el dato mínimo y no los crea', async () => {
+      // El docente solo ve a los estudiantes de sus cursos (fase 8b): perfil,
+      // curso en la sede del estudiante, matrícula y carga académica.
+      const ok = (res: request.Response) => {
+        expect(res.status).toBe(201);
+        return res.body.id as string;
+      };
+      const [teacherProfile] = (
+        await ctx.dataSource
+          .getRepository(TeacherEntity)
+          .insert({ userId: teacherAUserId, institutionId: institutionA.id })
+      ).identifiers as { id: string }[];
+      const yearId = ok(
+        await adminA.post('/api/academic-years').send({ year: 2026 }),
+      );
+      const gradeId = ok(
+        await adminA.post('/api/grades').send({ name: 'Sexto' }),
+      );
+      const subjectId = ok(
+        await adminA.post('/api/subjects').send({ name: 'Ciencias' }),
+      );
+      const courseId = ok(
+        await adminA.post('/api/courses').send({
+          name: '601',
+          gradeId,
+          campusId: campusA1.id,
+          academicYearId: yearId,
+        }),
+      );
+      const enrollmentId = ok(
+        await adminA
+          .post('/api/enrollments')
+          .send({ studentId: studentA1Id, courseId }),
+      );
+      ok(
+        await adminA
+          .post('/api/teacher-assignments')
+          .send({ courseId, subjectId, teacherId: teacherProfile.id }),
+      );
+      // studentA2 (otra sede, sin matrícula en sus cursos) no le aparece.
+      await teacherA.get(`/api/students/${studentA2Id}`).expect(404);
+
       const list = await teacherA.get('/api/students?limit=100').expect(200);
       const row = (
         list.body.data as { id: string; user: Record<string, unknown> }[]
@@ -385,6 +428,11 @@ describe('Docentes y estudiantes (e2e)', () => {
         .patch(`/api/students/${studentA1Id}`)
         .send({ guardianName: 'X' })
         .expect(403);
+      // Retirado: las pruebas siguientes lo cambian de sede.
+      await adminA
+        .patch(`/api/enrollments/${enrollmentId}`)
+        .send({ status: 'DROPPED' })
+        .expect(200);
     });
 
     it('administrador de sede: solo los de su sede', async () => {

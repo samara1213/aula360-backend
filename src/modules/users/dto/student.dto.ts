@@ -156,4 +156,12 @@ export class StudentQueryDto extends ListQueryDto {
   @IsOptional()
   @IsUUID()
   campusId?: string;
+
+  @ApiPropertyOptional({
+    format: 'uuid',
+    description: 'Con matrícula (en cualquier estado) en este curso',
+  })
+  @IsOptional()
+  @IsUUID()
+  courseId?: string;
 }

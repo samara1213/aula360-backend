@@ -91,9 +91,15 @@ describe('StudentsService', () => {
     [RoleEntity, roleRepo],
     [UserEntity, userRepo],
   ]);
-  const manager = { getRepository: jest.fn((e: unknown) => repos.get(e)) };
+  const manager = {
+    getRepository: jest.fn((e: unknown) => repos.get(e)),
+    query: jest.fn(),
+  };
+  const teacherRepo = { findOneBy: jest.fn() };
   const dataSource = {
     manager,
+    query: jest.fn(),
+    getRepository: jest.fn(() => teacherRepo),
     transaction: jest.fn((work: (m: typeof manager) => unknown) =>
       work(manager),
     ),
@@ -116,6 +122,10 @@ describe('StudentsService', () => {
     studentQb.getOneOrFail.mockResolvedValue({ bloodType: 'O+' });
     roleRepo.findOne.mockResolvedValue({ id: 'role-student' });
     uirQb.execute.mockResolvedValue({ affected: 1 });
+    // Sin matrícula vigente; quien consulta no es docente.
+    manager.query.mockResolvedValue([{ enrolled: false }]);
+    dataSource.query.mockResolvedValue([{ allowed: false }]);
+    teacherRepo.findOneBy.mockResolvedValue({ id: 'teacher-1' });
     studentQb.getManyAndCount.mockResolvedValue([[student()], 1]);
     userRepo.findOneOrFail.mockResolvedValue({ id: 'user-1' });
     users.insertUserWithAssignment.mockResolvedValue('user-1');
@@ -170,6 +180,91 @@ describe('StudentsService', () => {
           typeof sql === 'string' && sql.includes('first_name ILIKE'),
       ) as [string];
       expect(call[0]).not.toContain('u.document_number');
+    });
+
+    /** Rol TEACHER vigente; sus otros roles le dan `other` (null = toda la institución). */
+    const teacherWith = (other: string[] | null) => {
+      dataSource.query.mockResolvedValue([{ allowed: true }]);
+      permissions.campusScope.mockImplementation(
+        (
+          _u: string,
+          _i: string,
+          _s: string,
+          action: string,
+          opts?: { excludeGlobalRole?: string },
+        ) =>
+          Promise.resolve(
+            opts?.excludeGlobalRole ? other : action === 'update' ? [] : null,
+          ),
+      );
+    };
+
+    it('docente: solo matrículas vigentes de años activos en cursos con su carga', async () => {
+      teacherWith([]);
+      await service.findAll(scope, { page: 1, limit: 20 });
+      const [sql, params] = studentQb.andWhere.mock.calls.find(
+        ([q]: [unknown]) => typeof q === 'string' && q.includes('ownTeacherId'),
+      ) as [string, Record<string, unknown>];
+      expect(sql).toContain("te.status IN ('ENROLLED', 'SUSPENDED')");
+      expect(sql).toContain('ty.is_active');
+      expect(sql).toContain('tsc.is_active');
+      expect(params).toEqual({ otherView: [], ownTeacherId: 'teacher-1' });
+      expect(permissions.campusScope).toHaveBeenCalledWith(
+        'admin-1',
+        'inst-A',
+        'people.students',
+        'view',
+        { excludeGlobalRole: 'TEACHER' },
+      );
+    });
+
+    it('docente con otro rol limitado a una sede: esa sede o sus cursos', async () => {
+      teacherWith(['campus-9']);
+      await service.findAll(scope, { page: 1, limit: 20 });
+      expect(studentQb.andWhere).toHaveBeenCalledWith(
+        expect.stringContaining('s.campus_id IN (:...otherView) OR EXISTS'),
+        { otherView: ['campus-9'], ownTeacherId: 'teacher-1' },
+      );
+    });
+
+    it('docente cuyo otro rol cubre toda la institución: sin restricción', async () => {
+      teacherWith(null);
+      await service.findAll(scope, { page: 1, limit: 20 });
+      expect(teacherRepo.findOneBy).not.toHaveBeenCalled();
+    });
+
+    it('rol TEACHER sin perfil de docente: no ve a ninguno', async () => {
+      teacherWith([]);
+      teacherRepo.findOneBy.mockResolvedValue(null);
+      await service.findOne(scope, 'stu-1');
+      expect(studentQb.andWhere).toHaveBeenCalledWith('(false OR false)', {
+        otherView: [],
+        ownTeacherId: null,
+      });
+    });
+
+    it('sin el rol TEACHER: sin restricción', async () => {
+      viewOnly();
+      await service.findAll(scope, { page: 1, limit: 20 });
+      expect(teacherRepo.findOneBy).not.toHaveBeenCalled();
+    });
+
+    it('filtro por curso: solo cursos de la institución, de sus sedes y suyos', async () => {
+      teacherWith([]);
+      await service.findAll(scope, {
+        page: 1,
+        limit: 20,
+        courseId: 'course-1',
+      });
+      const [sql, params] = studentQb.andWhere.mock.calls.find(
+        ([q]: [unknown]) => typeof q === 'string' && q.includes('ce.course_id'),
+      ) as [string, Record<string, unknown>];
+      expect(sql).toContain('cg.institution_id = :institutionId');
+      expect(sql).toContain('ct.teacher_id = :ownTeacherId');
+      expect(params).toMatchObject({
+        courseId: 'course-1',
+        institutionId: 'inst-A',
+      });
     });
 
     it('solo estudiantes que conservan asignaciones en la institución', async () => {
@@ -313,6 +408,15 @@ describe('StudentsService', () => {
       await expect(
         service.update(scope, 'stu-1', { campusId: 'campus-2' }),
       ).rejects.toThrow(ConflictException);
+      expect(studentRepo.update).not.toHaveBeenCalled();
+    });
+
+    it('con matrícula vigente en un año activo no cambia de sede (409)', async () => {
+      manager.query.mockResolvedValue([{ enrolled: true }]);
+      await expect(
+        service.update(scope, 'stu-1', { campusId: 'campus-2' }),
+      ).rejects.toThrow(ConflictException);
+      expect(uirQb.execute).not.toHaveBeenCalled();
       expect(studentRepo.update).not.toHaveBeenCalled();
     });
 

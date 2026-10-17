@@ -10,8 +10,10 @@ import { GradesService, SubjectsService } from './catalog.service';
 import { CoursesController } from './courses.controller';
 import { CoursesService } from './courses.service';
 import { PeriodsService } from './periods.service';
+import { TeacherAssignmentsController } from './teacher-assignments.controller';
+import { TeacherAssignmentsService } from './teacher-assignments.service';
 
-/** Años lectivos, periodos, grados, materias y cursos (fase 8a). */
+/** Años lectivos, periodos, grados, materias y cursos (fase 8a) y carga académica (fase 8b). */
 @Module({
   imports: [SecurityModule],
   controllers: [
@@ -20,6 +22,7 @@ import { PeriodsService } from './periods.service';
     GradesController,
     SubjectsController,
     CoursesController,
+    TeacherAssignmentsController,
   ],
   providers: [
     AcademicYearsService,
@@ -27,6 +30,7 @@ import { PeriodsService } from './periods.service';
     GradesService,
     SubjectsService,
     CoursesService,
+    TeacherAssignmentsService,
   ],
   exports: [CoursesService],
 })

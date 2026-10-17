@@ -22,6 +22,7 @@ import {
   PermissionsReader,
 } from '../security/permissions-reader.service';
 import { RoleAssignmentsService } from '../security/role-assignments.service';
+import { hasActiveTeacherRole } from '../security/teacher-role';
 import {
   CreatedStudentResponseDto,
   StudentResponseDto,
@@ -33,6 +34,7 @@ import {
   UpdateStudentDto,
 } from './dto/student.dto';
 import { StudentEntity } from './entities/student.entity';
+import { TeacherEntity } from './entities/teacher.entity';
 import { ManagedUsersService, UsersScope } from './managed-users.service';
 import {
   globalRoleId,
@@ -42,6 +44,23 @@ import {
 } from './profiles.shared';
 
 export const STUDENTS_PERMISSION = 'people.students';
+
+/**
+ * Matrícula vigente (ENROLLED o SUSPENDED, año activo) del estudiante `s` en
+ * un curso donde el docente :ownTeacherId tiene carga académica activa.
+ */
+const OWN_CURRENT_STUDENT = `EXISTS (
+  SELECT 1 FROM enrollments te
+    JOIN academic_years ty ON ty.id = te.academic_year_id AND ty.is_active
+    JOIN teacher_subject_courses tsc ON tsc.course_id = te.course_id AND tsc.is_active
+   WHERE te.student_id = s.id AND te.status IN ('ENROLLED', 'SUSPENDED')
+     AND tsc.teacher_id = :ownTeacherId)`;
+
+/** Lo que ve un docente: las sedes que le dan sus otros roles y su perfil. */
+interface TeacherView {
+  otherView: string[];
+  teacherId: string | null;
+}
 
 /** Puede editar a ese estudiante: toda la institución o la sede del estudiante. */
 function canEdit(
@@ -76,7 +95,13 @@ const PROFILE_FIELDS = [
  * acudiente solo para quien puede editar a ESE estudiante, y `blood_type`
  * además nunca va en listados. Tampoco puede buscar por documento.
  * Cambiar la sede exige `update` sobre el estudiante y `create` en la sede
- * nueva (se valida como una asignación nueva). El propio estudiante consultará
+ * nueva (se valida como una asignación nueva), y que no tenga una matrícula
+ * vigente (ENROLLED o SUSPENDED) en un año activo.
+ * Docentes (fase 8b): a quien tiene el rol global TEACHER, ese rol solo le
+ * deja ver a los estudiantes con matrícula vigente en cursos donde tiene
+ * carga académica activa; sus otros roles le suman las sedes que le den. Un
+ * rol propio de la institución no queda restringido (riesgo aceptado: para
+ * roles administrativos de solo lectura). El propio estudiante consultará
  * sus datos por un endpoint aparte (no por aquí: no se gestiona a sí mismo).
  */
 @Injectable()
@@ -95,8 +120,13 @@ export class StudentsService {
     const campusScope = await this.campusScope(scope, 'view');
     const updateScope = await this.campusScope(scope, 'update');
     const qb = this.baseQuery(this.dataSource.manager, scope, campusScope);
+    const teacherView = await this.teacherView(scope);
+    this.restrictToOwnCourses(qb, teacherView);
     if (query.campusId) {
       qb.andWhere('s.campus_id = :campusId', { campusId: query.campusId });
+    }
+    if (query.courseId) {
+      this.filterByCourse(qb, scope, campusScope, teacherView, query.courseId);
     }
     if (query.isActive !== undefined) {
       qb.andWhere('u.is_active = :isActive', { isActive: query.isActive });
@@ -132,11 +162,17 @@ export class StudentsService {
   async findOne(scope: UsersScope, id: string): Promise<StudentResponseDto> {
     const manager = this.dataSource.manager;
     const campusScope = await this.campusScope(scope, 'view');
-    const student = await this.findVisible(manager, scope, campusScope, id);
+    const updateScope = await this.campusScope(scope, 'update');
+    const qb = this.baseQuery(manager, scope, campusScope).andWhere(
+      's.id = :id',
+      { id },
+    );
+    this.restrictToOwnCourses(qb, await this.teacherView(scope));
+    const student = await qb.getOne();
+    if (!student) throw new NotFoundException('Estudiante no encontrado');
 
     // Documento, contacto, acudiente y tipo de sangre: solo para quien puede
     // editar a ESTE estudiante.
-    const updateScope = await this.campusScope(scope, 'update');
     if (!canEdit(updateScope, student)) {
       return StudentResponseDto.fromDetail(student, undefined);
     }
@@ -240,6 +276,20 @@ export class StudentsService {
     student: StudentEntity,
     campusId: string | null,
   ): Promise<void> {
+    // El perfil ya está bloqueado (FOR UPDATE), igual que en la matrícula.
+    const [{ enrolled }] = await manager.query<{ enrolled: boolean }[]>(
+      `SELECT EXISTS (
+         SELECT 1 FROM enrollments e
+           JOIN academic_years y ON y.id = e.academic_year_id AND y.is_active
+          WHERE e.student_id = $1 AND e.status IN ('ENROLLED', 'SUSPENDED')
+       ) AS enrolled`,
+      [student.id],
+    );
+    if (enrolled) {
+      throw new ConflictException(
+        'El estudiante tiene una matrícula vigente: cámbielo de curso o retírelo primero',
+      );
+    }
     const roleId = await globalRoleId(manager, 'STUDENT');
     await this.assignments.validateAssignment(manager, scope, roleId, campusId);
     let affected: number | undefined;
@@ -275,6 +325,92 @@ export class StudentsService {
         'El rol STUDENT del estudiante no coincide con su sede',
       );
     }
+  }
+
+  /**
+   * Si quien consulta tiene el rol global TEACHER (dato mínimo, Ley 1581): las
+   * sedes que le dan sus OTROS roles para ver estudiantes y su perfil de
+   * docente. null = sin restricción (no es docente, u otro rol ya le da toda
+   * la institución).
+   */
+  private async teacherView(scope: UsersScope): Promise<TeacherView | null> {
+    const { userId } = scope.user;
+    const { institutionId } = scope;
+    if (!(await hasActiveTeacherRole(this.dataSource, userId, institutionId))) {
+      return null;
+    }
+    const otherView = await this.permissions.campusScope(
+      userId,
+      institutionId,
+      STUDENTS_PERMISSION,
+      'view',
+      { excludeGlobalRole: 'TEACHER' },
+    );
+    if (otherView === null) return null;
+    const teacher = await this.dataSource
+      .getRepository(TeacherEntity)
+      .findOneBy({ userId, institutionId });
+    return { otherView, teacherId: teacher?.id ?? null };
+  }
+
+  /** Sedes de sus otros roles, o matrícula vigente en un curso suyo. */
+  private restrictToOwnCourses(
+    qb: SelectQueryBuilder<StudentEntity>,
+    view: TeacherView | null,
+  ): void {
+    if (!view) return;
+    const byOtherRoles = view.otherView.length
+      ? 's.campus_id IN (:...otherView)'
+      : 'false';
+    const byOwnCourses = view.teacherId ? OWN_CURRENT_STUDENT : 'false';
+    qb.andWhere(`(${byOtherRoles} OR ${byOwnCourses})`, {
+      otherView: view.otherView,
+      ownTeacherId: view.teacherId,
+    });
+  }
+
+  /**
+   * Con matrícula en ese curso, si el curso está a su alcance: de la
+   * institución, de sus sedes y, para un docente, de las sedes de sus otros
+   * roles o con su carga activa. Así el filtro no revela matrículas de cursos
+   * ajenos.
+   */
+  private filterByCourse(
+    qb: SelectQueryBuilder<StudentEntity>,
+    scope: UsersScope,
+    campusScope: CampusScope,
+    view: TeacherView | null,
+    courseId: string,
+  ): void {
+    const conditions = [
+      'ce.student_id = s.id',
+      'ce.course_id = :courseId',
+      'cg.institution_id = :institutionId',
+    ];
+    if (campusScope) {
+      conditions.push(
+        campusScope.length ? 'cc.campus_id IN (:...courseCampuses)' : 'false',
+      );
+    }
+    if (view) {
+      const byOtherRoles = view.otherView.length
+        ? 'cc.campus_id IN (:...otherView)'
+        : 'false';
+      const byOwnLoad = view.teacherId
+        ? 'EXISTS (SELECT 1 FROM teacher_subject_courses ct WHERE ct.course_id = cc.id AND ct.is_active AND ct.teacher_id = :ownTeacherId)'
+        : 'false';
+      conditions.push(`(${byOtherRoles} OR ${byOwnLoad})`);
+    }
+    qb.andWhere(
+      `EXISTS (SELECT 1 FROM enrollments ce JOIN courses cc ON cc.id = ce.course_id JOIN grades cg ON cg.id = cc.grade_id WHERE ${conditions.join(' AND ')})`,
+      {
+        courseId,
+        institutionId: scope.institutionId,
+        courseCampuses: campusScope,
+        otherView: view?.otherView,
+        ownTeacherId: view?.teacherId,
+      },
+    );
   }
 
   /** Detalle completo: incluye el tipo de sangre (columna con select: false). */
