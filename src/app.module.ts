@@ -8,6 +8,7 @@ import { DEFAULT_THROTTLE } from './common/constants/throttle';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 import { validateEnv } from './config/env.validation';
 import { buildDataSourceOptions } from './database/typeorm.config';
+import { AcademicModule } from './modules/academic/academic.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { InstitutionsModule } from './modules/institutions/institutions.module';
 import { SecurityModule } from './modules/security/security.module';
@@ -40,6 +41,7 @@ import { StorageModule } from './storage/storage.module';
     InstitutionsModule,
     SecurityModule,
     UsersModule,
+    AcademicModule,
   ],
   controllers: [HealthController],
   providers: [{ provide: APP_FILTER, useClass: AllExceptionsFilter }],

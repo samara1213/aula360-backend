@@ -61,6 +61,8 @@ describe('AllExceptionsFilter', () => {
     ['23503', 409],
     ['23514', 400],
     ['22P02', 400],
+    ['40P01', 409],
+    ['40001', 409],
   ])(
     'traduce el error de Postgres %s a HTTP %i sin filtrar detalles',
     (code, expected) => {

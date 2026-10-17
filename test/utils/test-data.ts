@@ -18,6 +18,24 @@ import {
 
 export const TEST_PASSWORD = 'Prueba*E2e2026';
 
+/**
+ * Datos académicos de las instituciones que cumplen `institutionsSql`
+ * (subconsulta de ids), en orden de dependencias (FK RESTRICT).
+ */
+const ACADEMIC_CLEANUP = (institutionsSql: string): string[] => {
+  const years = `SELECT id FROM academic_years WHERE institution_id IN (${institutionsSql})`;
+  const courses = `SELECT c.id FROM courses c JOIN grades g ON g.id = c.grade_id WHERE g.institution_id IN (${institutionsSql})`;
+  return [
+    `DELETE FROM enrollments WHERE course_id IN (${courses}) OR academic_year_id IN (${years})`,
+    `DELETE FROM teacher_subject_courses WHERE course_id IN (${courses})`,
+    `DELETE FROM courses WHERE id IN (${courses})`,
+    `DELETE FROM periods WHERE academic_year_id IN (${years})`,
+    `DELETE FROM academic_years WHERE institution_id IN (${institutionsSql})`,
+    `DELETE FROM grades WHERE institution_id IN (${institutionsSql})`,
+    `DELETE FROM subjects WHERE institution_id IN (${institutionsSql})`,
+  ];
+};
+
 /** Hash calculado una sola vez (bcrypt con costo bajo: solo para pruebas). */
 let passwordHashPromise: Promise<string> | undefined;
 function testPasswordHash(): Promise<string> {
@@ -163,6 +181,11 @@ export class TestData {
    */
   async sweepLeftovers(): Promise<void> {
     await this.ds.transaction(async (m) => {
+      for (const sql of ACADEMIC_CLEANUP(
+        `SELECT id FROM institutions WHERE nit LIKE 'E2E-%'`,
+      )) {
+        await m.query(sql);
+      }
       // Perfiles (FK RESTRICT a users e institutions) antes que todo lo demás.
       for (const table of ['teachers', 'students']) {
         await m.query(
@@ -196,6 +219,11 @@ export class TestData {
 
   async cleanup(): Promise<void> {
     await this.ds.transaction(async (m) => {
+      if (this.institutionIds.length) {
+        for (const sql of ACADEMIC_CLEANUP('SELECT unnest($1::uuid[])')) {
+          await m.query(sql, [this.institutionIds]);
+        }
+      }
       if (this.userIds.length || this.institutionIds.length) {
         const owned = {
           u: this.userIds.length ? this.userIds : [null],

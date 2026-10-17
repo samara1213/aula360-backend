@@ -28,6 +28,15 @@ const PG_ERRORS: Record<string, { status: HttpStatus; message: string }> = {
     status: HttpStatus.BAD_REQUEST,
     message: 'Formato de dato inválido',
   },
+  // Transacciones concurrentes que se bloquean entre sí: el cliente puede reintentar.
+  '40P01': {
+    status: HttpStatus.CONFLICT,
+    message: 'Conflicto de concurrencia, intente de nuevo',
+  },
+  '40001': {
+    status: HttpStatus.CONFLICT,
+    message: 'Conflicto de concurrencia, intente de nuevo',
+  },
 };
 
 /** Status 4xx de errores que no son HttpException (p. ej. body-parser), o null. */
