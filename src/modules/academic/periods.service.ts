@@ -114,8 +114,14 @@ export class PeriodsService {
       const period = await this.getOrFail(manager, institutionId, id, true);
       const startDate = dto.startDate ?? period.startDate;
       const endDate = dto.endDate ?? period.endDate;
-      if (dto.startDate !== undefined || dto.endDate !== undefined) {
+      if (startDate !== period.startDate || endDate !== period.endDate) {
         await this.validateDates(manager, year, startDate, endDate, period.id);
+        await this.assertDatesKeepEvaluations(
+          manager,
+          period.id,
+          startDate,
+          endDate,
+        );
       }
       const changes = {
         name: dto.name ?? period.name,
@@ -152,6 +158,39 @@ export class PeriodsService {
         throw mapIntegrityError(error, { duplicate: DUPLICATE, inUse: IN_USE });
       }
     });
+  }
+
+  /**
+   * Hallazgo B3 de la fase 8a: las fechas no cambian si dejan evaluaciones
+   * fuera del periodo, ni si ya tiene boletines (calculados con el periodo
+   * anterior). El periodo ya está bloqueado (FOR UPDATE); las evaluaciones lo
+   * leen FOR SHARE.
+   */
+  private async assertDatesKeepEvaluations(
+    manager: EntityManager,
+    periodId: string,
+    startDate: string,
+    endDate: string,
+  ): Promise<void> {
+    const [row] = await manager.query<
+      { outside: boolean; hasReportCards: boolean }[]
+    >(
+      `SELECT
+         EXISTS (SELECT 1 FROM evaluations e WHERE e.period_id = $1
+                  AND (e.evaluation_date < $2::date OR e.evaluation_date > $3::date)) AS outside,
+         EXISTS (SELECT 1 FROM report_cards r WHERE r.period_id = $1) AS "hasReportCards"`,
+      [periodId, startDate, endDate],
+    );
+    if (row.hasReportCards) {
+      throw new ConflictException(
+        'El periodo ya tiene boletines: sus fechas no se pueden cambiar',
+      );
+    }
+    if (row.outside) {
+      throw new ConflictException(
+        'Hay evaluaciones del periodo fuera de las fechas nuevas',
+      );
+    }
   }
 
   private async validateDates(

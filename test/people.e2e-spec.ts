@@ -654,12 +654,17 @@ describe('Docentes y estudiantes (e2e)', () => {
       const actor = await loginAs(actorUser.email);
       process.env.THROTTLE_DISABLED = 'false';
       try {
-        const statuses: number[] = [];
-        for (let i = 0; i < 61; i++) {
-          statuses.push((await actor.get('/api/students?limit=1')).status);
-        }
-        expect(statuses.slice(0, 60).every((st) => st === 200)).toBe(true);
-        expect(statuses[60]).toBe(429);
+        // En paralelo: en serie, con la BD remota, las 61 pueden tardar más
+        // que la ventana de 60 s y la prueba fallaría sin que falle el límite.
+        const statuses = (
+          await Promise.all(
+            Array.from({ length: 61 }, () =>
+              actor.get('/api/students?limit=1'),
+            ),
+          )
+        ).map((res) => res.status);
+        expect(statuses.filter((st) => st === 200)).toHaveLength(60);
+        expect(statuses.filter((st) => st === 429)).toHaveLength(1);
       } finally {
         process.env.THROTTLE_DISABLED = 'true';
       }

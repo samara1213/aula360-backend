@@ -121,13 +121,18 @@ export class PermissionsReader {
    * alcance de otro rol que sí lo tiene pero está limitado a una sede.
    * excludeGlobalRole: no cuenta las asignaciones de ese rol global (p. ej.
    * el alcance que dan los demás roles de un docente, sin su rol TEACHER).
+   * onlyGlobalRole: solo cuenta las de ese rol global (lo que le da su rol
+   * TEACHER, sin sumar los permisos de sus otros roles).
    */
   async campusScope(
     userId: string,
     institutionId: string,
     slug: string,
     action: PermissionAction,
-    { excludeGlobalRole }: { excludeGlobalRole?: string } = {},
+    {
+      excludeGlobalRole,
+      onlyGlobalRole,
+    }: { excludeGlobalRole?: string; onlyGlobalRole?: string } = {},
   ): Promise<CampusScope> {
     const qb = this.memberships
       .createQueryBuilder('uir')
@@ -155,6 +160,11 @@ export class PermissionsReader {
     if (excludeGlobalRole) {
       qb.andWhere('NOT (r.institution_id IS NULL AND r.name = :excluded)', {
         excluded: excludeGlobalRole,
+      });
+    }
+    if (onlyGlobalRole) {
+      qb.andWhere('r.institution_id IS NULL AND r.name = :only', {
+        only: onlyGlobalRole,
       });
     }
     const rows = await qb.getRawMany<{ campusId: string | null }>();

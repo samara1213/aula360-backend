@@ -46,7 +46,10 @@ describe('PeriodsService', () => {
     [PeriodEntity, periodRepo],
     [AcademicYearEntity, yearRepo],
   ]);
-  const manager = { getRepository: jest.fn((e: unknown) => repos.get(e)) };
+  const manager = {
+    getRepository: jest.fn((e: unknown) => repos.get(e)),
+    query: jest.fn(),
+  };
   const dataSource = {
     manager,
     transaction: jest.fn((work: (m: typeof manager) => unknown) =>
@@ -64,6 +67,9 @@ describe('PeriodsService', () => {
   beforeEach(async () => {
     jest.clearAllMocks();
     permissions.requireInstitutionWide.mockResolvedValue(undefined);
+    manager.query.mockResolvedValue([
+      { outside: false, hasReportCards: false },
+    ]);
     yearRepo.findOne.mockResolvedValue({ id: 'y-1', year: 2026 });
     periodQb.getExists.mockResolvedValue(false);
     const moduleRef = await Test.createTestingModule({
@@ -164,6 +170,27 @@ describe('PeriodsService', () => {
         undefined,
         ['p'],
       );
+    });
+
+    it('no cambia fechas que dejen evaluaciones fuera (409)', async () => {
+      manager.query.mockResolvedValue([
+        { outside: true, hasReportCards: false },
+      ]);
+      await expect(
+        service.update(admin, 'p-1', { endDate: '2026-03-01' }),
+      ).rejects.toThrow(
+        'Hay evaluaciones del periodo fuera de las fechas nuevas',
+      );
+      expect(periodRepo.update).not.toHaveBeenCalled();
+    });
+
+    it('con boletines, las fechas no cambian (409)', async () => {
+      manager.query.mockResolvedValue([
+        { outside: false, hasReportCards: true },
+      ]);
+      await expect(
+        service.update(admin, 'p-1', { endDate: '2026-04-20' }),
+      ).rejects.toThrow(ConflictException);
     });
 
     it('solo el nombre: no revalida fechas', async () => {

@@ -25,7 +25,12 @@ export const TEST_PASSWORD = 'Prueba*E2e2026';
 const ACADEMIC_CLEANUP = (institutionsSql: string): string[] => {
   const years = `SELECT id FROM academic_years WHERE institution_id IN (${institutionsSql})`;
   const courses = `SELECT c.id FROM courses c JOIN grades g ON g.id = c.grade_id WHERE g.institution_id IN (${institutionsSql})`;
+  const periods = `SELECT id FROM periods WHERE academic_year_id IN (${years})`;
+  const evaluations = `SELECT e.id FROM evaluations e JOIN teacher_subject_courses t ON t.id = e.teacher_subject_course_id WHERE t.course_id IN (${courses}) OR e.period_id IN (${periods})`;
   return [
+    `DELETE FROM scores WHERE evaluation_id IN (${evaluations})`,
+    `DELETE FROM report_cards WHERE course_id IN (${courses}) OR period_id IN (${periods})`,
+    `DELETE FROM evaluations WHERE id IN (${evaluations})`,
     `DELETE FROM enrollments WHERE course_id IN (${courses}) OR academic_year_id IN (${years})`,
     `DELETE FROM teacher_subject_courses WHERE course_id IN (${courses})`,
     `DELETE FROM courses WHERE id IN (${courses})`,
