@@ -114,8 +114,8 @@ export class InstitutionsService {
       'passingScore',
     ]);
     // Transacción con la fila bloqueada: la comprobación de notas y el guardado
-    // son atómicos frente a otras ediciones de la institución.
-    // TODO(fase 9): el registro de notas debe bloquear la institución con FOR SHARE.
+    // son atómicos frente a otras ediciones de la institución y frente al
+    // registro de notas, que la bloquea FOR SHARE (fase 9b).
     return this.dataSource.transaction(async (manager) => {
       const repo = manager.getRepository(InstitutionEntity);
       const entity = await repo.findOne({

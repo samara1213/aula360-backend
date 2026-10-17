@@ -9,6 +9,7 @@ import {
   ParseUUIDPipe,
   Patch,
   Post,
+  Put,
   Query,
 } from '@nestjs/common';
 import {
@@ -22,7 +23,13 @@ import {
   ApiOkResponse,
   ApiOperation,
   ApiTags,
+  ApiTooManyRequestsResponse,
 } from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
+import {
+  PEOPLE_LIST_THROTTLE,
+  SCORES_WRITE_THROTTLE,
+} from '../../common/constants/throttle';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { RequirePermission } from '../../common/decorators/require-permission.decorator';
 import type { AuthUser } from '../../common/interfaces/auth-user.interface';
@@ -33,10 +40,12 @@ import {
   EvaluationResponseDto,
   UpdateEvaluationDto,
 } from './dto/evaluation.dto';
+import { EvaluationScoresDto, UpsertScoresDto } from './dto/score.dto';
 import {
   EVALUATIONS_PERMISSION,
   EvaluationsService,
 } from './evaluations.service';
+import { SCORES_PERMISSION, ScoresService } from './scores.service';
 
 const RULES =
   'El docente actúa sobre su propia carga activa y mientras el periodo no haya terminado; un administrador, en los cursos de sus sedes. La suma de porcentajes por materia, curso y periodo no supera 100.';
@@ -48,7 +57,10 @@ const RULES =
 })
 @Controller('evaluations')
 export class EvaluationsController {
-  constructor(private readonly evaluations: EvaluationsService) {}
+  constructor(
+    private readonly evaluations: EvaluationsService,
+    private readonly scores: ScoresService,
+  ) {}
 
   @Get()
   @RequirePermission(EVALUATIONS_PERMISSION, 'view')
@@ -132,5 +144,52 @@ export class EvaluationsController {
     @Param('id', ParseUUIDPipe) id: string,
   ): Promise<void> {
     return this.evaluations.remove(user, id);
+  }
+
+  @Get(':id/scores')
+  @RequirePermission(SCORES_PERMISSION, 'view')
+  @Throttle(PEOPLE_LIST_THROTTLE)
+  @ApiTooManyRequestsResponse({
+    description: 'Más de 60 consultas por minuto (por usuario)',
+  })
+  @ApiOperation({
+    summary: 'Notas de una evaluación',
+    description:
+      'Estudiantes matriculados en el curso con su nota o PENDING, y quienes ya tienen nota aunque no sigan matriculados.',
+  })
+  @ApiOkResponse({ type: EvaluationScoresDto })
+  @ApiNotFoundResponse({ description: 'Evaluación no encontrada' })
+  listScores(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+  ): Promise<EvaluationScoresDto> {
+    return this.scores.list(user, id);
+  }
+
+  @Put(':id/scores')
+  @RequirePermission(SCORES_PERMISSION, 'update')
+  @Throttle(SCORES_WRITE_THROTTLE)
+  @ApiTooManyRequestsResponse({
+    description: 'Más de 30 lotes por minuto (por usuario)',
+  })
+  @ApiOperation({
+    summary: 'Registrar notas en lote',
+    description:
+      'Todo o nada, con upsert; score null quita la nota. Cada nota exige matrícula vigente (ENROLLED) en el curso y estar dentro de la escala de la institución. El docente, en su carga activa y con el periodo en curso; el administrador también después, en cargas inactivas y con estudiantes retirados. Lo que no hace el docente de la carga queda en auditoría con el valor anterior y el nuevo.',
+  })
+  @ApiOkResponse({ type: EvaluationScoresDto })
+  @ApiBadRequestResponse({
+    description: 'Datos inválidos: el mensaje trae el error de cada fila',
+  })
+  @ApiNotFoundResponse({ description: 'Evaluación no encontrada' })
+  @ApiConflictResponse({
+    description: 'Carga inactiva (solo el administrador corrige)',
+  })
+  upsertScores(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: UpsertScoresDto,
+  ): Promise<EvaluationScoresDto> {
+    return this.scores.upsert(user, id, dto);
   }
 }

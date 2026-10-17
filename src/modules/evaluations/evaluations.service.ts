@@ -40,14 +40,18 @@ export const EVALUATIONS_PERMISSION = 'evaluations.evaluations';
  * - El administrador (ver EvaluationAccessService) actúa en los cursos de
  *   sus sedes, también en periodos terminados o años inactivos.
  * - Bloqueos, siempre en este orden: usuario que actúa (FOR SHARE),
- *   evaluación (FOR UPDATE), carga y periodo (FOR SHARE), y el bloqueo por
- *   (curso, materia, periodo). Las notas (fase 9b) siguen el mismo orden.
+ *   evaluación (FOR NO KEY UPDATE; FOR UPDATE solo al borrarla), carga y su
+ *   año, periodo (FOR SHARE), y el bloqueo por (curso, materia, periodo).
+ *   Las notas (fase 9b) siguen el mismo orden. FOR NO KEY UPDATE no choca
+ *   con el FOR KEY SHARE de las claves foráneas: borrar la carga o el
+ *   periodo a la vez no forma un deadlock (hallazgo M3 de la fase 9b).
  * - Solo en cargas activas; en las inactivas (docente reemplazado) solo se
  *   consultan. La fecha va dentro del periodo, que es del año del curso.
  * - La suma de porcentajes por materia, curso y periodo (todas las cargas,
  *   también la del docente anterior) no supera 100; se serializa con un
  *   bloqueo exclusivo por (curso, materia, periodo) en la transacción.
  * - Una evaluación con notas no se borra (409).
+ * - getVisible, lockAssignment y lockPeriod los usa también ScoresService.
  */
 @Injectable()
 export class EvaluationsService {
@@ -161,7 +165,12 @@ export class EvaluationsService {
         'update',
         manager,
       );
-      const evaluation = await this.getVisible(manager, actor, id, true);
+      const evaluation = await this.getVisible(
+        manager,
+        actor,
+        id,
+        'no-key-update',
+      );
       const tsc = await this.lockAssignment(
         manager,
         actor,
@@ -208,7 +217,7 @@ export class EvaluationsService {
         'delete',
         manager,
       );
-      const evaluation = await this.getVisible(manager, actor, id, true);
+      const evaluation = await this.getVisible(manager, actor, id, 'update');
       const tsc = await this.lockAssignment(
         manager,
         actor,
@@ -310,13 +319,16 @@ export class EvaluationsService {
 
   /**
    * Carga visible para quien actúa (institución + sede que administra o su
-   * propia carga), leída FOR SHARE: no se reemplaza ni termina mientras
-   * tanto. Debe estar activa (en las inactivas solo se consulta).
+   * propia carga), leída FOR SHARE junto con su año: no se reemplaza ni
+   * termina, ni el año se desactiva, mientras tanto (hallazgo B3 de la fase
+   * 9b). Debe estar activa (en las inactivas solo se consulta), salvo con
+   * allowInactive: quien llama decide (las notas, solo el administrador).
    */
-  private async lockAssignment(
+  async lockAssignment(
     manager: EntityManager,
     actor: EvaluationActor,
     id: string,
+    { allowInactive = false }: { allowInactive?: boolean } = {},
   ): Promise<TeacherSubjectCourseEntity> {
     const { sql, params } = this.access.visibility(actor);
     const tsc = await manager
@@ -330,10 +342,10 @@ export class EvaluationsService {
         institutionId: actor.institutionId,
       })
       .andWhere(sql, params)
-      .setLock('pessimistic_read', undefined, ['t'])
+      .setLock('pessimistic_read', undefined, ['t', 'y'])
       .getOne();
     if (!tsc) throw new NotFoundException('Carga académica no encontrada');
-    if (!tsc.isActive) {
+    if (!tsc.isActive && !allowInactive) {
       throw new ConflictException(
         'La carga académica no está activa: sus evaluaciones solo se consultan',
       );
@@ -342,7 +354,7 @@ export class EvaluationsService {
   }
 
   /** Periodo de la institución, FOR SHARE: sus fechas no cambian mientras tanto. */
-  private async lockPeriod(
+  async lockPeriod(
     manager: EntityManager,
     actor: EvaluationActor,
     id: string,
@@ -363,14 +375,20 @@ export class EvaluationsService {
     return period;
   }
 
-  private async getVisible(
+  async getVisible(
     manager: EntityManager,
     actor: EvaluationActor,
     id: string,
-    lock = false,
+    lock: false | 'update' | 'no-key-update' = false,
   ): Promise<EvaluationEntity> {
     const qb = this.baseQuery(manager, actor).andWhere('e.id = :id', { id });
-    if (lock) qb.setLock('pessimistic_write', undefined, ['e']);
+    if (lock) {
+      qb.setLock(
+        lock === 'update' ? 'pessimistic_write' : 'for_no_key_update',
+        undefined,
+        ['e'],
+      );
+    }
     const row = await qb.getOne();
     if (!row) throw new NotFoundException('Evaluación no encontrada');
     return row;

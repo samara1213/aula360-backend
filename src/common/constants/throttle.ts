@@ -41,3 +41,11 @@ export const SENSITIVE_ACTION_THROTTLE = {
 export const PEOPLE_LIST_THROTTLE = {
   default: { ttl: 60_000, limit: 60, getTracker: perUserTracker },
 };
+
+/**
+ * Registro de notas en lote: 30 por minuto por usuario.
+ * Uso: @Throttle(SCORES_WRITE_THROTTLE)
+ */
+export const SCORES_WRITE_THROTTLE = {
+  default: { ttl: 60_000, limit: 30, getTracker: perUserTracker },
+};

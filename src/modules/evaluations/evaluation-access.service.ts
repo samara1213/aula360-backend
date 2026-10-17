@@ -99,8 +99,14 @@ export class EvaluationAccessService {
    * Condición SQL de visibilidad sobre la carga (alias `t`) y su curso (alias
    * `c`): cursos de las sedes que administra, o su propia carga en las sedes
    * donde su rol TEACHER le da la acción (si no, 404, sin oráculo).
+   * activeOnly: la propia carga solo si sigue activa (cuadro de notas: un
+   * docente reemplazado no ve lo que registra el siguiente; hallazgo M1 de
+   * la fase 9b).
    */
-  visibility(actor: EvaluationActor): {
+  visibility(
+    actor: EvaluationActor,
+    { activeOnly = false }: { activeOnly?: boolean } = {},
+  ): {
     sql: string;
     params: Record<string, unknown>;
   } {
@@ -116,6 +122,7 @@ export class EvaluationAccessService {
         actor.teacherScope === null
           ? 't.teacher_id = :actorTeacherId'
           : 't.teacher_id = :actorTeacherId AND c.campus_id IN (:...teacherScope)';
+      if (activeOnly) byTeacher += ' AND t.is_active = true';
     }
     return {
       sql: `(${byAdmin} OR ${byTeacher})`,

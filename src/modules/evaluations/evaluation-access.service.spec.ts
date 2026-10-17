@@ -98,6 +98,11 @@ describe('EvaluationAccessService', () => {
     expect(service.visibility(actor).sql).toContain(
       't.teacher_id = :actorTeacherId AND c.campus_id IN (:...teacherScope)',
     );
+    expect(service.visibility(actor).sql).not.toContain('t.is_active');
+    // Cuadro de notas: solo su carga activa (M1 de la fase 9b).
+    expect(service.visibility(actor, { activeOnly: true }).sql).toContain(
+      'c.campus_id IN (:...teacherScope) AND t.is_active = true',
+    );
   });
 
   it('sin el rol TEACHER que dé la acción: no actúa como docente', async () => {
