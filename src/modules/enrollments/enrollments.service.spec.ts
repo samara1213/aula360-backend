@@ -74,7 +74,13 @@ describe('EnrollmentsService', () => {
     [StudentEntity, studentRepo],
     [UserEntity, userRepo],
   ]);
-  const manager = { getRepository: jest.fn((e: unknown) => repos.get(e)) };
+  const manager = {
+    getRepository: jest.fn((e: unknown) => repos.get(e)),
+    // Bloqueos y marca de boletines (fase 10b).
+    query: jest.fn((sql: string) =>
+      Promise.resolve(sql.includes('UPDATE report_cards') ? [[], 0] : []),
+    ),
+  };
   const dataSource = {
     manager,
     transaction: jest.fn((work: (m: typeof manager) => unknown) =>

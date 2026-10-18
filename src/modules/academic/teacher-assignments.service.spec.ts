@@ -96,7 +96,11 @@ describe('TeacherAssignmentsService', () => {
     subjectRepo.findOne.mockResolvedValue({ id: 'sub-1' });
     teacherRepo.findOneBy.mockResolvedValue({ id: 't-2', userId: 'u-2' });
     userRepo.findOne.mockResolvedValue({ id: 'u-2', isActive: true });
-    manager.query.mockResolvedValue([{ allowed: true }]);
+    manager.query.mockImplementation((sql: string) =>
+      Promise.resolve(
+        sql.includes('UPDATE report_cards') ? [[], 0] : [{ allowed: true }],
+      ),
+    );
     tscRepo.existsBy.mockResolvedValue(false);
     tscRepo.insert.mockResolvedValue({ identifiers: [{ id: 'a-2' }] });
     qb.getOne.mockResolvedValue(assignment());

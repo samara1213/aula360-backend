@@ -10,6 +10,7 @@ import { AuthUser } from '../../common/interfaces/auth-user.interface';
 import { schoolToday } from '../../common/utils/school-date';
 import { PeriodEntity } from '../academic/entities/period.entity';
 import { TeacherSubjectCourseEntity } from '../academic/entities/teacher-subject-course.entity';
+import { EvaluationResponseDto } from './dto/evaluation.dto';
 import { EvaluationEntity } from './entities/evaluation.entity';
 import {
   EvaluationAccessService,
@@ -118,7 +119,9 @@ describe('EvaluationsService', () => {
       Promise.resolve(
         sql.includes('pg_advisory_xact_lock')
           ? []
-          : [{ used: '40', exceeds: false }],
+          : sql.includes('UPDATE report_cards')
+            ? [[{ id: 'rc-1' }], 1]
+            : [{ used: '40', exceeds: false }],
       ),
     );
     const moduleRef = await Test.createTestingModule({
@@ -212,5 +215,63 @@ describe('EvaluationsService', () => {
     );
     periodQb.getOne.mockResolvedValue({ ...period(), academicYearId: 'y-2' });
     await expect(create()).rejects.toThrow(BadRequestException);
+  });
+
+  describe('update y boletines (fase 10b)', () => {
+    const stored = {
+      id: 'e-1',
+      teacherSubjectCourseId: 'tsc-1',
+      periodId: 'p-1',
+      title: 'Taller',
+      percentage: 20,
+      evaluationDate: today,
+    };
+    const run = async (changes: Record<string, unknown>) => {
+      jest
+        .spyOn(service, 'getVisible')
+        .mockResolvedValue(stored as unknown as EvaluationEntity);
+      jest
+        .spyOn(EvaluationResponseDto, 'from')
+        .mockReturnValue({} as EvaluationResponseDto);
+      const log = jest
+        .spyOn(
+          (service as unknown as { logger: { log: (m: string) => void } })
+            .logger,
+          'log',
+        )
+        .mockImplementation(() => undefined);
+      await service.update(user, 'e-1', changes);
+      return {
+        calls: manager.query.mock.calls as [string, unknown[]][],
+        log,
+      };
+    };
+
+    it('cambiar el porcentaje: bloqueo compartido y todos los boletines del curso y periodo desactualizados', async () => {
+      const { calls, log } = await run({ percentage: 30 });
+      const lock = calls.find(([sql]) =>
+        sql.includes('pg_advisory_xact_lock_shared'),
+      );
+      expect(lock?.[1]).toEqual(['report-cards:c-1:p-1']);
+      const mark = calls.find(([sql]) => sql.includes('UPDATE report_cards'));
+      expect(mark?.[1]).toEqual(['c-1', 'p-1']);
+      expect(JSON.parse(log.mock.calls[0][0])).toMatchObject({
+        audit: 'report-cards.outdated',
+        reason: 'evaluation.percentage-changed',
+        reportCardIds: ['rc-1'],
+      });
+    });
+
+    it('solo el título o la fecha (o el mismo porcentaje): no toca los boletines', async () => {
+      const { calls, log } = await run({ title: 'Otro', percentage: 20 });
+      expect(
+        calls.some(
+          ([sql]) =>
+            sql.includes('UPDATE report_cards') ||
+            sql.includes('pg_advisory_xact_lock_shared'),
+        ),
+      ).toBe(false);
+      expect(log).not.toHaveBeenCalled();
+    });
   });
 });

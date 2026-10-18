@@ -198,8 +198,7 @@ export const GLOBAL_ROLES: SeedRole[] = [
       { slug: 'evaluations', ...VIEW },
       { slug: 'evaluations.evaluations', ...FULL },
       { slug: 'evaluations.scores', ...EDIT },
-      { slug: 'reports', ...VIEW },
-      { slug: 'reports.report-cards', ...VIEW },
+      // Sin boletines: traen todas las materias (hallazgo M1 de la fase 10b).
     ],
   },
   {

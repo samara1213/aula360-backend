@@ -88,6 +88,7 @@ describe('ScoresService', () => {
   let service: ScoresService;
   let enrollments: { studentId: string; status: string }[];
   let scores: { studentId: string; score: number }[];
+  let outdatedCards: { id: string }[];
   const manager = {
     query: jest.fn(),
     getRepository: jest.fn((entity: unknown) => {
@@ -122,6 +123,7 @@ describe('ScoresService', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    outdatedCards = [];
     enrollments = [
       { studentId: 's-1', status: 'ENROLLED' },
       { studentId: 's-2', status: 'DROPPED' },
@@ -139,7 +141,9 @@ describe('ScoresService', () => {
           ? [{ student_id: 's-1', score: '4.00' }]
           : sql.trimStart().startsWith('DELETE')
             ? [[{ student_id: 's-2' }], 1]
-            : [],
+            : sql.includes('UPDATE report_cards')
+              ? [outdatedCards, outdatedCards.length]
+              : [],
       ),
     );
     const dataSource = {
@@ -189,6 +193,34 @@ describe('ScoresService', () => {
     );
   });
 
+  it('toma el bloqueo compartido de los boletines y marca desactualizados los de quienes cambiaron', async () => {
+    access.resolve.mockResolvedValue(actor(true));
+    outdatedCards = [{ id: 'rc-1' }];
+    const log = spyLog();
+    await upsert([
+      { studentId: 's-1', score: 4.5 },
+      { studentId: 's-2', score: null },
+    ]);
+    const calls = manager.query.mock.calls as [string, unknown[]][];
+    const lock = calls.findIndex(([sql]) =>
+      sql.includes('pg_advisory_xact_lock_shared'),
+    );
+    const insert = calls.findIndex(([sql]) => sql.startsWith('INSERT'));
+    expect(lock).toBeGreaterThanOrEqual(0);
+    expect(lock).toBeLessThan(insert);
+    expect(calls[lock][1]).toEqual(['report-cards:c-1:p-1']);
+    const mark = calls.find(([sql]) => sql.includes('UPDATE report_cards'));
+    expect(mark?.[1]).toEqual(['p-1', ['s-1', 's-2']]);
+    expect(mark?.[0]).not.toContain('course_id');
+    const audit = log.mock.calls
+      .map(([line]) => JSON.parse(line) as Record<string, unknown>)
+      .find((line) => line.audit === 'report-cards.outdated');
+    expect(audit).toMatchObject({
+      reason: 'scores.changed',
+      reportCardIds: ['rc-1'],
+    });
+  });
+
   it('todo o nada: 400 con el error de cada fila y sin escribir', async () => {
     const error = await upsert([
       { studentId: 's-1', score: 5.01 },
@@ -208,7 +240,9 @@ describe('ScoresService', () => {
       'scores[3] (s-1): el estudiante está repetido en el lote',
       'scores[4] (s-2): el estudiante está repetido en el lote',
     ]);
-    expect(manager.query).not.toHaveBeenCalled();
+    // Solo el bloqueo: ninguna escritura.
+    const calls = manager.query.mock.calls as [string][];
+    expect(calls.every(([sql]) => sql.startsWith('SELECT'))).toBe(true);
   });
 
   it('el docente no quita la nota de un retirado (400); el administrador sí', async () => {

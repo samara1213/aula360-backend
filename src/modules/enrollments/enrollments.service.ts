@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { DataSource, EntityManager, SelectQueryBuilder } from 'typeorm';
@@ -17,6 +18,10 @@ import { activeInstitutionId } from '../../common/utils/active-institution';
 import { mapIntegrityError } from '../academic/academic.shared';
 import { CoursesService } from '../academic/courses.service';
 import { CourseEntity } from '../academic/entities/course.entity';
+import {
+  lockCourseReportCards,
+  markReportCardsOutdated,
+} from '../reports/report-card-locks';
 import {
   CampusScope,
   PermissionsReader,
@@ -58,10 +63,15 @@ const CURRENT_STATUSES: readonly EnrollmentStatus[] = ['ENROLLED', 'SUSPENDED'];
  * si no, 404). Bloqueos (hallazgo M1 de la fase 8a), siempre en este orden:
  * cursos y su año (FOR SHARE, por id), matrícula (FOR UPDATE), usuario del
  * estudiante (FOR SHARE) y perfil (FOR UPDATE), como en /students.
+ * Un cambio de curso toma además el bloqueo compartido de los boletines de
+ * ambos cursos y marca como desactualizados los del estudiante en ese año
+ * (hallazgo M2 de la fase 10b). El estado no sale en el boletín: no marca.
  * Las observaciones solo van en el detalle (texto libre sobre menores).
  */
 @Injectable()
 export class EnrollmentsService {
+  private readonly logger = new Logger(EnrollmentsService.name);
+
   constructor(
     private readonly dataSource: DataSource,
     private readonly permissions: PermissionsReader,
@@ -175,92 +185,123 @@ export class EnrollmentsService {
     }
     const institutionId = activeInstitutionId(user);
     const campusScope = await this.campusScope(user, institutionId, 'update');
-    return this.dataSource.transaction(async (manager) => {
-      const found = await this.getVisible(
-        manager,
-        institutionId,
-        campusScope,
-        id,
-      );
-      // Cursos (actual y destino) primero, en orden por id: dos cambios
-      // cruzados nunca se esperan en ciclo.
-      const targetCourseId = dto.courseId ?? found.courseId;
-      const locked = new Map<string, CourseEntity>();
-      for (const courseId of [
-        ...new Set([found.courseId, targetCourseId]),
-      ].sort()) {
-        locked.set(
-          courseId,
-          await this.courses.lockForUse(
-            manager,
-            institutionId,
-            campusScope,
+    const { result, outdated } = await this.dataSource.transaction(
+      async (manager) => {
+        const found = await this.getVisible(
+          manager,
+          institutionId,
+          campusScope,
+          id,
+        );
+        // Cursos (actual y destino) primero, en orden por id: dos cambios
+        // cruzados nunca se esperan en ciclo.
+        const targetCourseId = dto.courseId ?? found.courseId;
+        const locked = new Map<string, CourseEntity>();
+        for (const courseId of [
+          ...new Set([found.courseId, targetCourseId]),
+        ].sort()) {
+          locked.set(
             courseId,
-          ),
+            await this.courses.lockForUse(
+              manager,
+              institutionId,
+              campusScope,
+              courseId,
+            ),
+          );
+        }
+        const enrollment = await this.getVisible(
+          manager,
+          institutionId,
+          campusScope,
+          id,
+          true,
         );
-      }
-      const enrollment = await this.getVisible(
-        manager,
-        institutionId,
-        campusScope,
-        id,
-        true,
-      );
-      if (enrollment.courseId !== found.courseId) {
-        // Otro cambio de curso terminó entre la lectura y el bloqueo.
-        throw new ConflictException(
-          'Conflicto de concurrencia, intente de nuevo',
-        );
-      }
-      const student = await this.lockStudent(
-        manager,
-        institutionId,
-        campusScope,
-        enrollment.studentId,
-      );
-
-      const from = enrollment.status;
-      const to = dto.status ?? from;
-      if (to !== from && !TRANSITIONS[from].includes(to)) {
-        throw new ConflictException(
-          `No se puede pasar una matrícula de ${from} a ${to}`,
-        );
-      }
-
-      const course = locked.get(targetCourseId) as CourseEntity;
-      const courseChanged = targetCourseId !== enrollment.courseId;
-      if (courseChanged) {
-        if (!CURRENT_STATUSES.includes(to)) {
+        if (enrollment.courseId !== found.courseId) {
+          // Otro cambio de curso terminó entre la lectura y el bloqueo.
           throw new ConflictException(
-            'Solo se cambia de curso una matrícula vigente',
+            'Conflicto de concurrencia, intente de nuevo',
           );
         }
-        if (course.academicYearId !== enrollment.academicYearId) {
-          throw new BadRequestException(
-            'Solo se cambia a un curso del mismo año lectivo',
-          );
-        }
-      }
-      // Cambiar de curso o reintegrar equivale a matricular de nuevo.
-      if (courseChanged || (from === 'DROPPED' && to === 'ENROLLED')) {
-        this.assertCanEnroll(course, student);
-      }
+        const student = await this.lockStudent(
+          manager,
+          institutionId,
+          campusScope,
+          enrollment.studentId,
+        );
 
-      const changes: Partial<EnrollmentEntity> = {};
-      if (to !== from) changes.status = to;
-      if (courseChanged) changes.courseId = course.id;
-      if (dto.observations !== undefined) {
-        changes.observations = dto.observations;
-      }
-      if (Object.keys(changes).length) {
-        await manager
-          .getRepository(EnrollmentEntity)
-          .update({ id: enrollment.id }, changes);
-      }
-      return EnrollmentResponseDto.from(
-        await this.getVisible(manager, institutionId, null, enrollment.id),
-      );
-    });
+        const from = enrollment.status;
+        const to = dto.status ?? from;
+        if (to !== from && !TRANSITIONS[from].includes(to)) {
+          throw new ConflictException(
+            `No se puede pasar una matrícula de ${from} a ${to}`,
+          );
+        }
+
+        const course = locked.get(targetCourseId) as CourseEntity;
+        const courseChanged = targetCourseId !== enrollment.courseId;
+        if (courseChanged) {
+          if (!CURRENT_STATUSES.includes(to)) {
+            throw new ConflictException(
+              'Solo se cambia de curso una matrícula vigente',
+            );
+          }
+          if (course.academicYearId !== enrollment.academicYearId) {
+            throw new BadRequestException(
+              'Solo se cambia a un curso del mismo año lectivo',
+            );
+          }
+        }
+        // Cambiar de curso o reintegrar equivale a matricular de nuevo.
+        if (courseChanged || (from === 'DROPPED' && to === 'ENROLLED')) {
+          this.assertCanEnroll(course, student);
+        }
+
+        const changes: Partial<EnrollmentEntity> = {};
+        if (to !== from) changes.status = to;
+        if (courseChanged) changes.courseId = course.id;
+        if (dto.observations !== undefined) {
+          changes.observations = dto.observations;
+        }
+        if (courseChanged) {
+          await lockCourseReportCards(manager, [
+            enrollment.courseId,
+            course.id,
+          ]);
+        }
+        if (Object.keys(changes).length) {
+          await manager
+            .getRepository(EnrollmentEntity)
+            .update({ id: enrollment.id }, changes);
+        }
+        const outdatedIds = courseChanged
+          ? await markReportCardsOutdated(manager, {
+              studentIds: [enrollment.studentId],
+              academicYearId: enrollment.academicYearId,
+            })
+          : [];
+        return {
+          result: EnrollmentResponseDto.from(
+            await this.getVisible(manager, institutionId, null, enrollment.id),
+          ),
+          outdated: outdatedIds.length
+            ? {
+                audit: 'report-cards.outdated',
+                reason: 'enrollment.course-changed',
+                actorId: user.userId,
+                institutionId,
+                enrollmentId: enrollment.id,
+                fromCourseId: enrollment.courseId,
+                toCourseId: course.id,
+                reportCardIds: outdatedIds,
+              }
+            : null,
+        };
+      },
+    );
+    // Después del commit.
+    if (outdated) this.logger.log(JSON.stringify(outdated));
+    return result;
   }
 
   /** La sede se valida antes que el estado: no se revela el estado de otros. */

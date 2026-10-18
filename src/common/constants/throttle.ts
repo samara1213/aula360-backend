@@ -49,3 +49,11 @@ export const PEOPLE_LIST_THROTTLE = {
 export const SCORES_WRITE_THROTTLE = {
   default: { ttl: 60_000, limit: 30, getTracker: perUserTracker },
 };
+
+/**
+ * Generar un boletín (imprime un PDF con Chromium): 10 por minuto por usuario.
+ * Uso: @Throttle(REPORT_CARD_GENERATE_THROTTLE)
+ */
+export const REPORT_CARD_GENERATE_THROTTLE = {
+  default: { ttl: 60_000, limit: 10, getTracker: perUserTracker },
+};

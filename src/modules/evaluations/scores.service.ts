@@ -12,6 +12,10 @@ import { PeriodEntity } from '../academic/entities/period.entity';
 import { TeacherSubjectCourseEntity } from '../academic/entities/teacher-subject-course.entity';
 import { EnrollmentEntity } from '../enrollments/entities/enrollment.entity';
 import { InstitutionEntity } from '../institutions/entities/institution.entity';
+import {
+  lockReportCards,
+  markReportCardsOutdated,
+} from '../reports/report-card-locks';
 import { EvaluationResponseDto } from './dto/evaluation.dto';
 import {
   EvaluationScoresDto,
@@ -65,8 +69,11 @@ export function toScale(institution: InstitutionEntity): GradingScaleDto {
  *   dentro de la escala de la institución; null quita la nota.
  * - Bloqueos en el orden de las evaluaciones: usuario que actúa, evaluación
  *   (FOR NO KEY UPDATE), carga y su año, periodo (FOR SHARE); luego la
+ *   bloqueo compartido de los boletines del curso y el periodo, la
  *   institución (FOR SHARE: su escala no cambia mientras tanto) y las
  *   matrículas (FOR SHARE).
+ * - Los boletines vigentes de los estudiantes cuya nota cambió quedan
+ *   desactualizados (outdated_at), también en la auditoría (fase 10b).
  */
 @Injectable()
 export class ScoresService {
@@ -100,7 +107,7 @@ export class ScoresService {
     evaluationId: string,
     dto: UpsertScoresDto,
   ): Promise<EvaluationScoresDto> {
-    const { result, audit } = await this.dataSource.transaction(
+    const { result, audit, outdated } = await this.dataSource.transaction(
       async (manager) => {
         const actor = await this.access.resolve(
           user,
@@ -127,6 +134,7 @@ export class ScoresService {
         );
         const isAdmin = this.access.isAdminOf(actor, tsc.course.campusId);
         const reason = this.assertCanGrade(actor, isAdmin, tsc, period);
+        await lockReportCards(manager, tsc.courseId, period.id, 'shared');
         const institution = await manager
           .getRepository(InstitutionEntity)
           .findOneOrFail({
@@ -199,8 +207,26 @@ export class ScoresService {
             new: null,
           })),
         ];
+        // Por (estudiante, periodo), sin filtrar por curso: también el
+        // boletín de antes de un cambio de curso (hallazgo M2 de la fase 10b).
+        const outdatedIds = await markReportCardsOutdated(manager, {
+          periodId: period.id,
+          studentIds: changes.map((c) => c.studentId),
+        });
         return {
           result: await this.toDto(manager, institution, evaluation),
+          outdated: outdatedIds.length
+            ? {
+                audit: 'report-cards.outdated',
+                reason: 'scores.changed',
+                actorId: actor.userId,
+                institutionId: actor.institutionId,
+                evaluationId: evaluation.id,
+                courseId: tsc.courseId,
+                periodId: period.id,
+                reportCardIds: outdatedIds,
+              }
+            : null,
           audit:
             reason && changes.length
               ? {
@@ -219,6 +245,7 @@ export class ScoresService {
     );
     // Después del commit: solo lo que de verdad cambió.
     if (audit) this.logger.log(JSON.stringify(audit));
+    if (outdated) this.logger.log(JSON.stringify(outdated));
     return result;
   }
 

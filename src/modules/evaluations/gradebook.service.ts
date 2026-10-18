@@ -327,6 +327,33 @@ export class GradebookService {
   }
 
   /**
+   * Notas de un estudiante en un periodo, en todas las materias con carga en
+   * su curso, con las mismas reglas del cuadro de notas (boletín, fase 10b).
+   * Sin control de acceso: quien llama ya lo hizo.
+   */
+  async periodGrades(
+    manager: EntityManager,
+    courseId: string,
+    studentId: string,
+    periodId: string,
+    passingScore: number,
+  ): Promise<(GradebookSubjectDto & SubjectPeriodGradeDto)[]> {
+    const subjects = await this.courseSubjects(manager, courseId);
+    const grades = await this.grades(
+      manager,
+      courseId,
+      subjects.map((s) => s.id),
+      [periodId],
+      [studentId],
+      passingScore,
+    );
+    return subjects.map((subject) => ({
+      ...subject,
+      ...grades.get(studentId, subject.id, periodId),
+    }));
+  }
+
+  /**
    * Notas por (estudiante, materia, periodo), en NUMERIC. Cada estudiante
    * cuenta en todas las evaluaciones de la materia en el curso (de todas sus
    * cargas, también la del docente anterior).

@@ -17,5 +17,7 @@ import { ScoresService } from './scores.service';
     ScoresService,
     GradebookService,
   ],
+  // Para los boletines (fase 10b).
+  exports: [EvaluationAccessService, EvaluationsService, GradebookService],
 })
 export class EvaluationsModule {}

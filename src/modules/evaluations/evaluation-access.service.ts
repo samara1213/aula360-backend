@@ -110,6 +110,24 @@ export class EvaluationAccessService {
     sql: string;
     params: Record<string, unknown>;
   } {
+    const { byAdmin, byTeacher, params } = this.conditions(actor, activeOnly);
+    return { sql: `(${byAdmin} OR ${byTeacher})`, params };
+  }
+
+  /**
+   * Solo la parte de administrador, sobre el curso (alias `c`): cursos de las
+   * sedes que administra. Boletines (fase 10b): el docente no los ve, porque
+   * traen todas las materias (hallazgo M1 de la fase 10b).
+   */
+  adminCourseVisibility(actor: EvaluationActor): {
+    sql: string;
+    params: Record<string, unknown>;
+  } {
+    const { byAdmin, params } = this.conditions(actor, false);
+    return { sql: `(${byAdmin})`, params };
+  }
+
+  private conditions(actor: EvaluationActor, activeOnly: boolean) {
     const byAdmin =
       actor.adminScope === null
         ? 'true'
@@ -125,7 +143,8 @@ export class EvaluationAccessService {
       if (activeOnly) byTeacher += ' AND t.is_active = true';
     }
     return {
-      sql: `(${byAdmin} OR ${byTeacher})`,
+      byAdmin,
+      byTeacher,
       params: {
         adminScope: actor.adminScope,
         teacherScope: actor.teacherScope,

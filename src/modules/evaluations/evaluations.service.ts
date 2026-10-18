@@ -3,6 +3,7 @@ import {
   ConflictException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { DataSource, EntityManager, SelectQueryBuilder } from 'typeorm';
@@ -18,6 +19,10 @@ import { mapIntegrityError } from '../academic/academic.shared';
 import { AcademicYearEntity } from '../academic/entities/academic-year.entity';
 import { PeriodEntity } from '../academic/entities/period.entity';
 import { TeacherSubjectCourseEntity } from '../academic/entities/teacher-subject-course.entity';
+import {
+  lockReportCards,
+  markReportCardsOutdated,
+} from '../reports/report-card-locks';
 import {
   CreateEvaluationDto,
   EvaluationQueryDto,
@@ -51,10 +56,16 @@ export const EVALUATIONS_PERMISSION = 'evaluations.evaluations';
  *   también la del docente anterior) no supera 100; se serializa con un
  *   bloqueo exclusivo por (curso, materia, periodo) en la transacción.
  * - Una evaluación con notas no se borra (409).
+ * - Cambiar el porcentaje cambia las notas del periodo: toma el bloqueo
+ *   compartido de los boletines del curso y el periodo y los marca como
+ *   desactualizados (fase 10b). Crear o borrar no: una evaluación nueva o
+ *   sin notas no cambia ninguna definitiva ni acumulado.
  * - getVisible, lockAssignment y lockPeriod los usa también ScoresService.
  */
 @Injectable()
 export class EvaluationsService {
+  private readonly logger = new Logger(EvaluationsService.name);
+
   constructor(
     private readonly dataSource: DataSource,
     private readonly access: EvaluationAccessService,
@@ -158,54 +169,83 @@ export class EvaluationsService {
     dto: UpdateEvaluationDto,
   ): Promise<EvaluationResponseDto> {
     rejectNullFields(dto, ['title', 'percentage', 'evaluationDate']);
-    return this.dataSource.transaction(async (manager) => {
-      const actor = await this.access.resolve(
-        user,
-        EVALUATIONS_PERMISSION,
-        'update',
-        manager,
-      );
-      const evaluation = await this.getVisible(
-        manager,
-        actor,
-        id,
-        'no-key-update',
-      );
-      const tsc = await this.lockAssignment(
-        manager,
-        actor,
-        evaluation.teacherSubjectCourseId,
-      );
-      const period = await this.lockPeriod(manager, actor, evaluation.periodId);
-      this.assertCanWrite(actor, tsc, period);
-      const evaluationDate = dto.evaluationDate ?? evaluation.evaluationDate;
-      this.assertDateInPeriod(evaluationDate, period);
-      if (
-        dto.percentage !== undefined &&
-        dto.percentage !== evaluation.percentage
-      ) {
-        await this.assertPercentage(
+    const { result, outdated } = await this.dataSource.transaction(
+      async (manager) => {
+        const actor = await this.access.resolve(
+          user,
+          EVALUATIONS_PERMISSION,
+          'update',
           manager,
-          tsc,
-          period.id,
-          dto.percentage,
-          evaluation.id,
         );
-      }
-      await manager.getRepository(EvaluationEntity).update(
-        { id: evaluation.id },
-        {
-          title: dto.title ?? evaluation.title,
-          percentage: dto.percentage ?? evaluation.percentage,
-          evaluationDate,
-        },
-      );
-      const updated = await this.getVisible(manager, actor, evaluation.id);
-      return EvaluationResponseDto.from(
-        updated,
-        await this.allocated(manager, tsc, period.id),
-      );
-    });
+        const evaluation = await this.getVisible(
+          manager,
+          actor,
+          id,
+          'no-key-update',
+        );
+        const tsc = await this.lockAssignment(
+          manager,
+          actor,
+          evaluation.teacherSubjectCourseId,
+        );
+        const period = await this.lockPeriod(
+          manager,
+          actor,
+          evaluation.periodId,
+        );
+        this.assertCanWrite(actor, tsc, period);
+        const evaluationDate = dto.evaluationDate ?? evaluation.evaluationDate;
+        this.assertDateInPeriod(evaluationDate, period);
+        const percentageChanged =
+          dto.percentage !== undefined &&
+          dto.percentage !== evaluation.percentage;
+        let outdatedIds: string[] = [];
+        if (percentageChanged) {
+          await this.assertPercentage(
+            manager,
+            tsc,
+            period.id,
+            dto.percentage!,
+            evaluation.id,
+          );
+          await lockReportCards(manager, tsc.courseId, period.id, 'shared');
+          outdatedIds = await markReportCardsOutdated(manager, {
+            courseId: tsc.courseId,
+            periodId: period.id,
+          });
+        }
+        await manager.getRepository(EvaluationEntity).update(
+          { id: evaluation.id },
+          {
+            title: dto.title ?? evaluation.title,
+            percentage: dto.percentage ?? evaluation.percentage,
+            evaluationDate,
+          },
+        );
+        const updated = await this.getVisible(manager, actor, evaluation.id);
+        return {
+          result: EvaluationResponseDto.from(
+            updated,
+            await this.allocated(manager, tsc, period.id),
+          ),
+          outdated: outdatedIds.length
+            ? {
+                audit: 'report-cards.outdated',
+                reason: 'evaluation.percentage-changed',
+                actorId: actor.userId,
+                institutionId: actor.institutionId,
+                evaluationId: evaluation.id,
+                courseId: tsc.courseId,
+                periodId: period.id,
+                reportCardIds: outdatedIds,
+              }
+            : null,
+        };
+      },
+    );
+    // Después del commit.
+    if (outdated) this.logger.log(JSON.stringify(outdated));
+    return result;
   }
 
   /** Solo sin notas registradas (409 si las tiene). */

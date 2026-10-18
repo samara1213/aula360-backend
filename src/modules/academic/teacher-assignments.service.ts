@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { DataSource, EntityManager, SelectQueryBuilder } from 'typeorm';
@@ -13,6 +14,10 @@ import {
 } from '../../common/dto/pagination.dto';
 import { AuthUser } from '../../common/interfaces/auth-user.interface';
 import { activeInstitutionId } from '../../common/utils/active-institution';
+import {
+  lockCourseReportCards,
+  markReportCardsOutdated,
+} from '../reports/report-card-locks';
 import {
   CampusScope,
   PermissionsReader,
@@ -45,9 +50,16 @@ const ACTIVE_EXISTS =
  * Toda alta o reemplazo bloquea primero el curso (FOR SHARE, hallazgo M1 de
  * la fase 8a). El docente debe estar activo y tener el rol TEACHER en la sede
  * del curso o en toda la institución; el año lectivo del curso, activo.
+ * Si cambia la lista de materias del curso (alta de una materia que no tenía
+ * carga, o borrado de su única carga), los boletines del curso quedan
+ * desactualizados, con el bloqueo compartido de los boletines (hallazgo M2
+ * de la fase 10b). Reemplazar o terminar una carga solo cambia el docente
+ * impreso: no marca.
  */
 @Injectable()
 export class TeacherAssignmentsService {
+  private readonly logger = new Logger(TeacherAssignmentsService.name);
+
   constructor(
     private readonly dataSource: DataSource,
     private readonly permissions: PermissionsReader,
@@ -140,44 +152,64 @@ export class TeacherAssignmentsService {
   ): Promise<TeacherAssignmentResponseDto> {
     const institutionId = activeInstitutionId(user);
     const campusScope = await this.campusScope(user, institutionId, 'create');
-    return this.dataSource.transaction(async (manager) => {
-      const course = await this.courses.lockForUse(
-        manager,
-        institutionId,
-        campusScope,
-        dto.courseId,
-      );
-      this.assertActiveYear(course);
-      const subject = await manager.getRepository(SubjectEntity).findOne({
-        where: { id: dto.subjectId, institutionId },
-        lock: { mode: 'pessimistic_read' },
-      });
-      if (!subject) throw new NotFoundException('Materia no encontrada');
-      await this.assertTeacherCanTeach(
-        manager,
-        institutionId,
-        campusScope,
-        dto.teacherId,
-        course,
-      );
+    const { result, outdated } = await this.dataSource.transaction(
+      async (manager) => {
+        const course = await this.courses.lockForUse(
+          manager,
+          institutionId,
+          campusScope,
+          dto.courseId,
+        );
+        this.assertActiveYear(course);
+        const subject = await manager.getRepository(SubjectEntity).findOne({
+          where: { id: dto.subjectId, institutionId },
+          lock: { mode: 'pessimistic_read' },
+        });
+        if (!subject) throw new NotFoundException('Materia no encontrada');
+        await this.assertTeacherCanTeach(
+          manager,
+          institutionId,
+          campusScope,
+          dto.teacherId,
+          course,
+        );
 
-      const active = await manager
-        .getRepository(TeacherSubjectCourseEntity)
-        .existsBy({
+        const active = await manager
+          .getRepository(TeacherSubjectCourseEntity)
+          .existsBy({
+            courseId: course.id,
+            subjectId: subject.id,
+            isActive: true,
+          });
+        if (active) throw new ConflictException(ACTIVE_EXISTS);
+        await lockCourseReportCards(manager, [course.id]);
+        const newSubject = !(await manager
+          .getRepository(TeacherSubjectCourseEntity)
+          .existsBy({ courseId: course.id, subjectId: subject.id }));
+        const id = await this.insert(manager, {
           courseId: course.id,
           subjectId: subject.id,
-          isActive: true,
+          teacherId: dto.teacherId,
         });
-      if (active) throw new ConflictException(ACTIVE_EXISTS);
-      const id = await this.insert(manager, {
-        courseId: course.id,
-        subjectId: subject.id,
-        teacherId: dto.teacherId,
-      });
-      return TeacherAssignmentResponseDto.from(
-        await this.getVisible(manager, institutionId, null, id),
-      );
-    });
+        const outdatedIds = newSubject
+          ? await markReportCardsOutdated(manager, { courseId: course.id })
+          : [];
+        return {
+          result: TeacherAssignmentResponseDto.from(
+            await this.getVisible(manager, institutionId, null, id),
+          ),
+          outdated: this.outdatedAudit(
+            user,
+            institutionId,
+            'teacher-assignment.created',
+            course.id,
+            outdatedIds,
+          ),
+        };
+      },
+    );
+    if (outdated) this.logger.log(JSON.stringify(outdated));
+    return result;
   }
 
   /** Reemplaza al docente: la asignación actual queda en el historial. */
@@ -259,24 +291,60 @@ export class TeacherAssignmentsService {
   async remove(user: AuthUser, id: string): Promise<void> {
     const institutionId = activeInstitutionId(user);
     const campusScope = await this.campusScope(user, institutionId, 'delete');
-    await this.dataSource.transaction(async (manager) => {
+    const outdated = await this.dataSource.transaction(async (manager) => {
       const current = await this.lockAssignment(
         manager,
         institutionId,
         campusScope,
         id,
       );
+      await lockCourseReportCards(manager, [current.courseId]);
+      const repo = manager.getRepository(TeacherSubjectCourseEntity);
       try {
-        await manager
-          .getRepository(TeacherSubjectCourseEntity)
-          .delete({ id: current.id });
+        await repo.delete({ id: current.id });
       } catch (error) {
         throw mapIntegrityError(error, {
           duplicate: ACTIVE_EXISTS,
           inUse: 'La asignación tiene evaluaciones: no se puede borrar',
         });
       }
+      const subjectGone = !(await repo.existsBy({
+        courseId: current.courseId,
+        subjectId: current.subjectId,
+      }));
+      const outdatedIds = subjectGone
+        ? await markReportCardsOutdated(manager, {
+            courseId: current.courseId,
+          })
+        : [];
+      return this.outdatedAudit(
+        user,
+        institutionId,
+        'teacher-assignment.deleted',
+        current.courseId,
+        outdatedIds,
+      );
     });
+    if (outdated) this.logger.log(JSON.stringify(outdated));
+  }
+
+  private outdatedAudit(
+    user: AuthUser,
+    institutionId: string,
+    reason: string,
+    courseId: string,
+    reportCardIds: string[],
+  ): Record<string, unknown> | null {
+    return reportCardIds.length
+      ? {
+          audit: 'report-cards.outdated',
+          reason,
+          actorId: user.userId,
+          institutionId,
+          courseId,
+          reportCardIds,
+        }
+      : null;
   }
 
   /**
