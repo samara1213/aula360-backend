@@ -1,4 +1,7 @@
-import { BadGatewayException } from '@nestjs/common';
+import {
+  BadGatewayException,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 import { randomBytes } from 'crypto';
 import * as request from 'supertest';
 import { schoolToday } from '../src/common/utils/school-date';
@@ -22,6 +25,13 @@ interface ReportCard {
   outdated: boolean;
   outdatedAt: string | null;
   generatedBy: string | null;
+}
+
+interface BatchResult {
+  total: number;
+  generated: number;
+  skipped: { studentId: string; reason: string }[];
+  failed: { studentId: string }[];
 }
 
 interface Page {
@@ -543,6 +553,227 @@ describe('Boletines (e2e)', () => {
       expect(JSON.stringify(page)).not.toMatch(/pdfPath|report-cards\//);
     });
   });
+  describe('POST /report-cards/batch (fase 10c)', () => {
+    const batchUrl = `${url}/batch`;
+    const batch = async (
+      a: Agent,
+      courseId: string,
+      status: number,
+      force?: boolean,
+    ) =>
+      (await send(
+        a,
+        'post',
+        batchUrl,
+        { courseId, periodId: period, ...(force ? { force } : {}) },
+        status,
+      )) as unknown as BatchResult;
+
+    it('sin force omite a quien le faltan definitivas; no incluye a los retirados', async () => {
+      const dropped = await createStudent(campusA1.id);
+      const enrollment = await post(
+        adminA,
+        '/api/enrollments',
+        { studentId: dropped.id, courseId: courseA1 },
+        201,
+      );
+      await send(
+        adminA,
+        'patch',
+        `/api/enrollments/${enrollment.id}`,
+        { status: 'DROPPED' },
+        200,
+      );
+      const result = await batch(adminA, courseA1, 200);
+      expect(result).toMatchObject({ total: 2, generated: 1, failed: [] });
+      expect(result.skipped).toEqual([
+        { studentId: s2, reason: expect.stringMatching(/Física/) as string },
+      ]);
+    });
+
+    it('con force genera todos', async () => {
+      expect(await batch(campusAdminA, courseA1, 200, true)).toEqual({
+        total: 2,
+        generated: 2,
+        skipped: [],
+        failed: [],
+      });
+      expect((await list(adminA, '?outdated=true')).meta.total).toBe(0);
+    });
+
+    it('si falla un PDF, los demás siguen y se reporta como fallido', async () => {
+      const renderer = ctx.app.get(PdfRendererService);
+      const spy = jest
+        .spyOn(renderer, 'render')
+        .mockRejectedValueOnce(
+          new ServiceUnavailableException('No se pudo generar el PDF'),
+        );
+      let result: BatchResult;
+      try {
+        result = await batch(adminA, courseA1, 200, true);
+      } finally {
+        spy.mockRestore();
+      }
+      expect(result.generated).toBe(1);
+      expect(result.failed).toHaveLength(1);
+      expect([s1, s2]).toContain(result.failed[0].studentId);
+    });
+
+    it('curso sin matriculados: resumen vacío', async () => {
+      expect(await batch(adminA, courseA1b, 200)).toEqual({
+        total: 0,
+        generated: 0,
+        skipped: [],
+        failed: [],
+      });
+    });
+
+    it('otra sede, otra institución, sin permiso o periodo de otro año', async () => {
+      const otherYear = (
+        await post(adminA, '/api/academic-years', { year: year - 1 }, 201)
+      ).id;
+      const otherPeriod = (
+        await post(
+          adminA,
+          `/api/academic-years/${otherYear}/periods`,
+          {
+            name: 'Otro',
+            startDate: `${year - 1}-02-01`,
+            endDate: `${year - 1}-03-01`,
+          },
+          201,
+        )
+      ).id;
+      await post(
+        adminA,
+        batchUrl,
+        { courseId: courseA1, periodId: otherPeriod },
+        400,
+      );
+      await batch(adminB, courseA1, 404);
+      await post(
+        teacher1,
+        batchUrl,
+        { courseId: courseA1, periodId: period },
+        403,
+      );
+      await post(
+        student1,
+        batchUrl,
+        { courseId: courseA1, periodId: period },
+        403,
+      );
+      await post(adminA, batchUrl, { courseId: 'x', periodId: period }, 400);
+    });
+
+    it('el administrador de otra sede no genera el curso: 404', async () => {
+      const enrollment = (
+        (await adminA.get(`/api/enrollments?studentId=${s3}`).expect(200))
+          .body as { data: { course: { id: string } }[] }
+      ).data[0];
+      await batch(campusAdminA, enrollment.course.id, 404);
+    });
+
+    it('periodo de otra institución: 404; campos extra: 400', async () => {
+      const yearB = (await post(adminB, '/api/academic-years', { year }, 201))
+        .id;
+      const periodB = (
+        await post(
+          adminB,
+          `/api/academic-years/${yearB}/periods`,
+          { name: 'B', startDate: past.start, endDate: past.end },
+          201,
+        )
+      ).id;
+      await post(
+        adminA,
+        batchUrl,
+        { courseId: courseA1, periodId: periodB },
+        404,
+      );
+      await post(
+        adminA,
+        batchUrl,
+        { courseId: courseA1, periodId: period, studentIds: [s1] },
+        400,
+      );
+    });
+
+    it('una sola generación masiva a la vez por institución (409)', async () => {
+      const renderer = ctx.app.get(PdfRendererService);
+      const original = renderer.render.bind(renderer);
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => (release = resolve));
+      let started!: () => void;
+      const running = new Promise<void>((resolve) => (started = resolve));
+      const spy = jest
+        .spyOn(renderer, 'render')
+        .mockImplementation(async (html: string) => {
+          started();
+          await gate;
+          return original(html);
+        });
+      try {
+        const first = adminA
+          .post(batchUrl)
+          .send({ courseId: courseA1, periodId: period, force: true });
+        const firstDone = first.then((res) => res);
+        await running;
+        const second = await campusAdminA
+          .post(batchUrl)
+          .send({ courseId: courseA1, periodId: period, force: true });
+        expect(second.status).toBe(409);
+        // Otra institución no espera.
+        await batch(adminB, courseA1, 404);
+        release();
+        expect((await firstDone).status).toBe(200);
+      } finally {
+        release();
+        spy.mockRestore();
+      }
+      // Terminado el primero, se puede de nuevo.
+      expect((await batch(campusAdminA, courseA1, 200, true)).generated).toBe(
+        2,
+      );
+    });
+
+    it('logo configurado pero ilegible: 502 antes de imprimir nada', async () => {
+      await ctx.dataSource.query(
+        'UPDATE institutions SET logo_path = $1 WHERE id = $2',
+        [`${institutionA.id}/logos/no-existe.png`, institutionA.id],
+      );
+      const renderer = ctx.app.get(PdfRendererService);
+      const spy = jest.spyOn(renderer, 'render');
+      try {
+        await batch(adminA, courseA1, 502, true);
+        await generate(adminA, s1, 502);
+        expect(spy).not.toHaveBeenCalled();
+      } finally {
+        spy.mockRestore();
+        await ctx.dataSource.query(
+          'UPDATE institutions SET logo_path = NULL WHERE id = $1',
+          [institutionA.id],
+        );
+      }
+      // Y el siguiente lote funciona (nada quedó tomado).
+      expect((await batch(adminA, courseA1, 200, true)).generated).toBe(2);
+    });
+
+    it('límite de 3 por minuto (429)', async () => {
+      process.env.THROTTLE_DISABLED = 'false';
+      try {
+        const statuses: number[] = [];
+        for (let i = 0; i < 4; i++) {
+          statuses.push((await adminB.post(batchUrl).send({})).status);
+        }
+        expect(statuses.slice(0, 3).every((st) => st === 400)).toBe(true);
+        expect(statuses[3]).toBe(429);
+      } finally {
+        process.env.THROTTLE_DISABLED = 'true';
+      }
+    });
+  });
+
   describe('otros cambios que lo desactualizan (M2)', () => {
     const levels = (altoMax: number, top: number) => ({
       levels: [

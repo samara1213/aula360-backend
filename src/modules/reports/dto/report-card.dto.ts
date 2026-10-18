@@ -30,6 +30,61 @@ export class GenerateReportCardDto {
   force?: boolean;
 }
 
+export class BatchReportCardsDto {
+  @ApiProperty({ format: 'uuid' })
+  @IsUUID()
+  courseId: string;
+
+  @ApiProperty({ format: 'uuid', description: 'Periodo del año del curso' })
+  @IsUUID()
+  periodId: string;
+
+  @ApiPropertyOptional({
+    default: false,
+    description:
+      'Generar también los que tienen materias pendientes (sin ninguna definitiva se omiten siempre)',
+  })
+  @IsOptional()
+  @IsBoolean()
+  force?: boolean;
+}
+
+class BatchSkippedDto {
+  @ApiProperty({ format: 'uuid' })
+  studentId: string;
+
+  @ApiProperty({ example: 'Faltan definitivas en: Inglés. Use force para...' })
+  reason: string;
+}
+
+class BatchFailedDto {
+  @ApiProperty({ format: 'uuid' })
+  studentId: string;
+}
+
+export class BatchReportCardsResultDto {
+  @ApiProperty({
+    example: 32,
+    description: 'Matriculados (sin retirados) del curso',
+  })
+  total: number;
+
+  @ApiProperty({ example: 30 })
+  generated: number;
+
+  @ApiProperty({
+    type: [BatchSkippedDto],
+    description: 'Omitidos por definitivas faltantes',
+  })
+  skipped: BatchSkippedDto[];
+
+  @ApiProperty({
+    type: [BatchFailedDto],
+    description: 'Fallidos (PDF, Storage o concurrencia): reintentar',
+  })
+  failed: BatchFailedDto[];
+}
+
 export class ReportCardQueryDto extends PaginationDto {
   @ApiPropertyOptional({ format: 'uuid' })
   @IsOptional()

@@ -37,6 +37,11 @@ const PG_ERRORS: Record<string, { status: HttpStatus; message: string }> = {
     status: HttpStatus.CONFLICT,
     message: 'Conflicto de concurrencia, intente de nuevo',
   },
+  // lock_timeout vencido (p. ej. al generar boletines, fase 10c).
+  '55P03': {
+    status: HttpStatus.CONFLICT,
+    message: 'Conflicto de concurrencia, intente de nuevo',
+  },
 };
 
 /** Status 4xx de errores que no son HttpException (p. ej. body-parser), o null. */

@@ -57,3 +57,12 @@ export const SCORES_WRITE_THROTTLE = {
 export const REPORT_CARD_GENERATE_THROTTLE = {
   default: { ttl: 60_000, limit: 10, getTracker: perUserTracker },
 };
+
+/**
+ * Generación masiva de boletines (un curso entero): 3 por minuto por usuario.
+ * Lo que de verdad la limita es que solo corre una por institución a la vez.
+ * Uso: @Throttle(REPORT_CARD_BATCH_THROTTLE)
+ */
+export const REPORT_CARD_BATCH_THROTTLE = {
+  default: { ttl: 60_000, limit: 3, getTracker: perUserTracker },
+};

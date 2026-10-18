@@ -1,10 +1,12 @@
 import {
+  BadRequestException,
   ConflictException,
+  HttpException,
   Injectable,
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { DataSource, EntityManager, SelectQueryBuilder } from 'typeorm';
+import { DataSource, EntityManager, In, SelectQueryBuilder } from 'typeorm';
 import {
   paginate,
   Paginated,
@@ -26,7 +28,10 @@ import {
 import { average2, GradebookService } from '../evaluations/gradebook.service';
 import { InstitutionEntity } from '../institutions/entities/institution.entity';
 import { StudentEntity } from '../users/entities/student.entity';
+import { UserEntity } from '../users/entities/user.entity';
 import {
+  BatchReportCardsDto,
+  BatchReportCardsResultDto,
   GenerateReportCardDto,
   OwnReportCardDto,
   ReportCardDownloadDto,
@@ -44,6 +49,34 @@ import { ReportTemplatesService } from './report-templates.service';
 
 export const REPORT_CARDS_PERMISSION = 'reports.report-cards';
 const BUCKET = 'report-cards';
+/**
+ * Estudiantes a la vez en la generación masiva: los mismos que imprime
+ * Chromium, para no llenar la cola que comparten todas las instituciones
+ * (hallazgo M1 de la fase 10c).
+ */
+const BATCH_CONCURRENCY = 2;
+/** Tope de matriculados por lote: la petición no debe durar minutos (M2). */
+export const MAX_BATCH_STUDENTS = 60;
+/** Matrículas que reciben boletín en la generación masiva (no los retirados). */
+const BATCH_STATUSES: readonly string[] = [
+  'ENROLLED',
+  'SUSPENDED',
+  'GRADUATED',
+];
+/** Espera máxima por el bloqueo exclusivo del curso y el periodo (M3). */
+const LOCK_TIMEOUT = '5s';
+
+/**
+ * Faltan definitivas, no hay ninguna o la matrícula ya no está vigente: en la
+ * masiva, se omite.
+ */
+class SkipReportCardException extends ConflictException {}
+
+/** Opciones de una generación (la masiva reutiliza el logo y filtra estados). */
+interface GenerateOptions {
+  logo?: string | null;
+  statuses?: readonly string[];
+}
 
 /** Lo que muestra un boletín, leído de la base (sin logo ni fecha). */
 interface Snapshot {
@@ -78,12 +111,21 @@ interface Snapshot {
  *   No marcan, porque no cambian notas ni resultados: el nombre o el logo de
  *   la institución, el nombre o el documento del estudiante y el docente
  *   impreso (hallazgo B7 de la fase 10b); basta regenerar.
+ * - Generación masiva por curso y periodo (fase 10c): los matriculados
+ *   ENROLLED, SUSPENDED o GRADUATED (60 como máximo), de a 2, cada uno con su
+ *   propia transacción; los incompletos se omiten y los demás errores se
+ *   reportan como fallidos, sin detener el resto. Una a la vez por
+ *   institución (en memoria del proceso: con varias instancias habría que
+ *   pasar a un bloqueo en la base o a una cola de trabajos). El logo se lee
+ *   antes de empezar y el permiso se vuelve a comprobar antes de cada grupo.
  * - Descarga con URL firmada de corta vida; generar y descargar quedan en la
  *   auditoría (log JSON).
  */
 @Injectable()
 export class ReportCardsService {
   private readonly logger = new Logger(ReportCardsService.name);
+  /** Instituciones con una generación masiva en curso. */
+  private readonly batchesRunning = new Set<string>();
 
   constructor(
     private readonly dataSource: DataSource,
@@ -98,27 +140,203 @@ export class ReportCardsService {
     user: AuthUser,
     dto: GenerateReportCardDto,
   ): Promise<ReportCardResponseDto> {
-    const force = dto.force ?? false;
+    const actor = await this.access.resolve(
+      user,
+      REPORT_CARDS_PERMISSION,
+      'create',
+    );
+    return ReportCardResponseDto.from(await this.generateFor(user, actor, dto));
+  }
+
+  /**
+   * Boletines de todo un curso en un periodo. 404 si el curso no es de una
+   * sede que administra; 400 si el periodo es de otro año lectivo.
+   */
+  async generateBatch(
+    user: AuthUser,
+    dto: BatchReportCardsDto,
+  ): Promise<BatchReportCardsResultDto> {
     const actor = await this.access.resolve(
       user,
       REPORT_CARDS_PERMISSION,
       'create',
     );
     const manager = this.dataSource.manager;
-    const first = await this.snapshot(manager, actor, dto, false);
+    const course = await manager
+      .getRepository(CourseEntity)
+      .createQueryBuilder('c')
+      .innerJoin('c.grade', 'g')
+      .where('c.id = :id AND g.institution_id = :institutionId', {
+        id: dto.courseId,
+        institutionId: actor.institutionId,
+      })
+      .getOne();
+    if (!course || !this.access.isAdminOf(actor, course.campusId)) {
+      throw new NotFoundException('Curso no encontrado');
+    }
+    const period = await manager
+      .getRepository(PeriodEntity)
+      .createQueryBuilder('p')
+      .innerJoin(
+        AcademicYearEntity,
+        'y',
+        'y.id = p.academic_year_id AND y.institution_id = :institutionId',
+        { institutionId: actor.institutionId },
+      )
+      .where('p.id = :id', { id: dto.periodId })
+      .getOne();
+    if (!period) throw new NotFoundException('Periodo no encontrado');
+    if (period.academicYearId !== course.academicYearId) {
+      throw new BadRequestException(
+        'El periodo no es del año lectivo del curso',
+      );
+    }
+    const enrollments = await manager
+      .getRepository(EnrollmentEntity)
+      .createQueryBuilder('e')
+      .innerJoin('e.student', 's')
+      .innerJoin('s.user', 'u')
+      .where('e.course_id = :courseId', { courseId: course.id })
+      .andWhere({ status: In([...BATCH_STATUSES]) })
+      .orderBy('u.lastName', 'ASC')
+      .addOrderBy('u.firstName', 'ASC')
+      .addOrderBy('s.id', 'ASC')
+      .getMany();
+    if (enrollments.length > MAX_BATCH_STUDENTS) {
+      throw new BadRequestException(
+        `El curso tiene ${enrollments.length} matriculados: la generación masiva admite ${MAX_BATCH_STUDENTS}; genere los demás uno a uno`,
+      );
+    }
+
+    const { institutionId } = actor;
+    if (this.batchesRunning.has(institutionId)) {
+      throw new ConflictException(
+        'Ya hay una generación masiva de boletines en curso en la institución: espere a que termine',
+      );
+    }
+    this.batchesRunning.add(institutionId);
+    const result: BatchReportCardsResultDto = {
+      total: enrollments.length,
+      generated: 0,
+      skipped: [],
+      failed: [],
+    };
+    let aborted = false;
+    try {
+      // El logo una sola vez, antes de imprimir nada: si no se puede leer, 502.
+      const logo = await this.templates.requiredLogoDataUri(
+        await manager
+          .getRepository(InstitutionEntity)
+          .findOneByOrFail({ id: institutionId }),
+      );
+      for (let i = 0; i < enrollments.length; i += BATCH_CONCURRENCY) {
+        const chunk = enrollments.slice(i, i + BATCH_CONCURRENCY);
+        // ¿Sigue activo y administrando la sede del curso? (M5)
+        const current = await this.stillAdmin(user, course.campusId);
+        if (!current) {
+          aborted = true;
+          for (const e of enrollments.slice(i)) {
+            result.failed.push({ studentId: e.studentId });
+          }
+          break;
+        }
+        const outcomes = await Promise.allSettled(
+          chunk.map((e) =>
+            this.generateFor(
+              user,
+              current,
+              { studentId: e.studentId, periodId: period.id, force: dto.force },
+              { logo, statuses: BATCH_STATUSES },
+            ),
+          ),
+        );
+        outcomes.forEach((outcome, index) => {
+          const studentId = chunk[index].studentId;
+          if (outcome.status === 'fulfilled') {
+            result.generated++;
+            return;
+          }
+          const error: unknown = outcome.reason;
+          if (error instanceof SkipReportCardException) {
+            result.skipped.push({ studentId, reason: error.message });
+            return;
+          }
+          if (!(error instanceof HttpException)) {
+            // Sin el mensaje: puede traer SQL o valores (B3).
+            this.logger.error(
+              `Boletín de ${studentId} no generado: ${errorLabel(error)}`,
+            );
+          }
+          result.failed.push({ studentId });
+        });
+      }
+    } finally {
+      this.batchesRunning.delete(institutionId);
+      // También si el lote terminó con error: lo procesado hasta ahí (B2).
+      this.logger.log(
+        JSON.stringify({
+          audit: 'report-cards.batch',
+          actorId: user.userId,
+          institutionId,
+          courseId: course.id,
+          periodId: period.id,
+          forced: dto.force ?? false,
+          aborted,
+          total: result.total,
+          generated: result.generated,
+          skipped: result.skipped.length,
+          failed: result.failed.length,
+        }),
+      );
+    }
+    return result;
+  }
+
+  /** El actor de nuevo (sin bloqueos), o null si ya no administra la sede. */
+  private async stillAdmin(
+    user: AuthUser,
+    campusId: string,
+  ): Promise<EvaluationActor | null> {
+    const active = await this.dataSource
+      .getRepository(UserEntity)
+      .existsBy({ id: user.userId, isActive: true });
+    if (!active) return null;
+    const actor = await this.access.resolve(
+      user,
+      REPORT_CARDS_PERMISSION,
+      'create',
+    );
+    return this.access.isAdminOf(actor, campusId) ? actor : null;
+  }
+
+  /** Genera o regenera un boletín (ver la descripción de la clase). */
+  private async generateFor(
+    user: AuthUser,
+    actor: EvaluationActor,
+    dto: GenerateReportCardDto,
+    options: GenerateOptions = {},
+  ): Promise<ReportCardEntity> {
+    const force = dto.force ?? false;
+    const manager = this.dataSource.manager;
+    const first = await this.snapshot(manager, actor, dto, false, options);
     this.assertComplete(first, force);
     const template = await this.templates.resolveActive(
       manager,
       actor.institutionId,
     );
-    const institution = await manager
-      .getRepository(InstitutionEntity)
-      .findOneByOrFail({ id: actor.institutionId });
+    const logo =
+      options.logo !== undefined
+        ? options.logo
+        : await this.templates.requiredLogoDataUri(
+            await manager
+              .getRepository(InstitutionEntity)
+              .findOneByOrFail({ id: actor.institutionId }),
+          );
     const html = template.render({
       ...first.data,
       institution: {
         ...first.data.institution,
-        logoDataUri: await this.templates.logoDataUri(institution),
+        logoDataUri: logo,
       },
       generatedAt: schoolToday(),
     });
@@ -138,7 +356,7 @@ export class ReportCardsService {
           'create',
           tx,
         );
-        const current = await this.snapshot(tx, locked, dto, true);
+        const current = await this.snapshot(tx, locked, dto, true, options);
         if (fingerprint(current) !== fingerprint(first)) {
           throw new ConflictException(
             'Las notas cambiaron mientras se generaba el boletín: intente de nuevo',
@@ -179,7 +397,7 @@ export class ReportCardsService {
         regenerated: saved.previousPath !== null,
       }),
     );
-    return ReportCardResponseDto.from(saved.card);
+    return saved.card;
   }
 
   /**
@@ -317,6 +535,7 @@ export class ReportCardsService {
     actor: EvaluationActor,
     dto: GenerateReportCardDto,
     locked: boolean,
+    { statuses }: GenerateOptions = {},
   ): Promise<Snapshot> {
     const notFound = () =>
       new NotFoundException(
@@ -346,6 +565,14 @@ export class ReportCardsService {
       academicYearId: period.academicYearId,
     });
     if (!enrollment) throw notFound();
+    const assertStatus = (status: string) => {
+      if (statuses && !statuses.includes(status)) {
+        throw new SkipReportCardException(
+          'La matrícula ya no está vigente (retirado)',
+        );
+      }
+    };
+    assertStatus(enrollment.status);
     const course = await manager
       .getRepository(CourseEntity)
       .createQueryBuilder('c')
@@ -356,6 +583,8 @@ export class ReportCardsService {
       .getOneOrFail();
     if (!this.access.isAdminOf(actor, course.campusId)) throw notFound();
     if (locked) {
+      // Sin esperar indefinidamente con la conexión tomada (M3): 55P03 -> 409.
+      await manager.query(`SET LOCAL lock_timeout = '${LOCK_TIMEOUT}'`);
       await lockReportCards(manager, course.id, period.id, 'exclusive');
       const again = await manager
         .getRepository(EnrollmentEntity)
@@ -365,6 +594,7 @@ export class ReportCardsService {
           'La matrícula cambió mientras se generaba el boletín: intente de nuevo',
         );
       }
+      assertStatus(again.status);
     }
 
     const institution = await manager
@@ -447,12 +677,12 @@ export class ReportCardsService {
   /** Sin ninguna definitiva, siempre 409; con pendientes, 409 salvo force. */
   private assertComplete(snapshot: Snapshot, force: boolean): void {
     if (snapshot.finalAverage === null) {
-      throw new ConflictException(
+      throw new SkipReportCardException(
         'El estudiante no tiene ninguna definitiva en el periodo: no se puede generar el boletín',
       );
     }
     if (snapshot.pending.length && !force) {
-      throw new ConflictException(
+      throw new SkipReportCardException(
         `Faltan definitivas en: ${snapshot.pending.join(', ')}. Use force para generarlo con esas materias pendientes`,
       );
     }
@@ -553,4 +783,11 @@ function fingerprint(snapshot: Snapshot): string {
     finalAverage: snapshot.finalAverage,
     data: snapshot.data,
   });
+}
+
+/** Tipo y código de un error, sin su mensaje. */
+function errorLabel(error: unknown): string {
+  if (!(error instanceof Error)) return typeof error;
+  const code = (error as { code?: unknown }).code;
+  return typeof code === 'string' ? `${error.name} (${code})` : error.name;
 }

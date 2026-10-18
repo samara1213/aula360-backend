@@ -2,6 +2,8 @@ import {
   Body,
   Controller,
   Get,
+  HttpCode,
+  HttpStatus,
   Param,
   ParseUUIDPipe,
   Post,
@@ -9,6 +11,7 @@ import {
 } from '@nestjs/common';
 import {
   ApiBadGatewayResponse,
+  ApiBadRequestResponse,
   ApiConflictResponse,
   ApiCookieAuth,
   ApiCreatedResponse,
@@ -23,6 +26,7 @@ import {
 import { Throttle } from '@nestjs/throttler';
 import {
   PEOPLE_LIST_THROTTLE,
+  REPORT_CARD_BATCH_THROTTLE,
   REPORT_CARD_GENERATE_THROTTLE,
 } from '../../common/constants/throttle';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
@@ -30,6 +34,8 @@ import { RequirePermission } from '../../common/decorators/require-permission.de
 import type { AuthUser } from '../../common/interfaces/auth-user.interface';
 import { Paginated } from '../../common/dto/pagination.dto';
 import {
+  BatchReportCardsDto,
+  BatchReportCardsResultDto,
   GenerateReportCardDto,
   OwnReportCardDto,
   ReportCardDownloadDto,
@@ -75,6 +81,32 @@ export class ReportCardsController {
     @Body() dto: GenerateReportCardDto,
   ): Promise<ReportCardResponseDto> {
     return this.reportCards.generate(user, dto);
+  }
+
+  @Post('batch')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermission(REPORT_CARDS_PERMISSION, 'create')
+  @Throttle(REPORT_CARD_BATCH_THROTTLE)
+  @ApiOperation({
+    summary: 'Generar los boletines de un curso en un periodo',
+    description:
+      'Administrador de la sede del curso. Matriculados ENROLLED, SUSPENDED y GRADUATED (no los retirados), 60 como máximo, de a 2. Los que tienen definitivas faltantes se omiten (con force, solo los que no tienen ninguna); los errores de un estudiante no detienen a los demás. Una generación masiva a la vez por institución.',
+  })
+  @ApiOkResponse({ type: BatchReportCardsResultDto })
+  @ApiNotFoundResponse({ description: 'Curso o periodo no encontrado' })
+  @ApiBadRequestResponse({
+    description: 'Periodo de otro año lectivo o más de 60 matriculados',
+  })
+  @ApiConflictResponse({
+    description: 'Ya hay una generación masiva en curso en la institución',
+  })
+  @ApiBadGatewayResponse({ description: 'No se pudo leer el logo' })
+  @ApiTooManyRequestsResponse({ description: 'Más de 3 por minuto' })
+  generateBatch(
+    @CurrentUser() user: AuthUser,
+    @Body() dto: BatchReportCardsDto,
+  ): Promise<BatchReportCardsResultDto> {
+    return this.reportCards.generateBatch(user, dto);
   }
 
   @Get()

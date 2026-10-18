@@ -257,6 +257,21 @@ export class ReportTemplatesService {
 
   /** Logo como data URI PNG (el renderizador no hace peticiones); null si falla. */
   async logoDataUri(institution: InstitutionEntity): Promise<string | null> {
+    try {
+      return await this.requiredLogoDataUri(institution);
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Para boletines reales: null solo si la institución no tiene logo; si lo
+   * tiene y no se puede leer, 502 (un boletín no sale sin logo en silencio;
+   * hallazgo M4 de la fase 10c).
+   */
+  async requiredLogoDataUri(
+    institution: InstitutionEntity,
+  ): Promise<string | null> {
     if (!institution.logoPath) return null;
     try {
       const original = await this.storage.download(
@@ -267,9 +282,11 @@ export class ReportTemplatesService {
       return `data:image/png;base64,${png.toString('base64')}`;
     } catch (error) {
       this.logger.warn(
-        `Boletín sin logo (${institution.id}): ${(error as Error).message}`,
+        `No se pudo leer el logo (${institution.id}): ${(error as Error).message}`,
       );
-      return null;
+      throw new BadGatewayException(
+        'No se pudo leer el logo de la institución',
+      );
     }
   }
 
