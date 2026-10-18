@@ -92,6 +92,20 @@ export class StorageService {
     }
   }
 
+  /** Contenido de un archivo (plantillas de boletín, logo para el PDF). */
+  async download(bucket: BucketName, path: string): Promise<Buffer> {
+    const { data, error } = await this.client.storage
+      .from(bucket)
+      .download(path);
+    if (error || !data) {
+      this.logger.error(
+        `Fallo al leer ${bucket}/${path}: ${error?.message ?? 'sin datos'}`,
+      );
+      throw new BadGatewayException('No se pudo leer el archivo');
+    }
+    return Buffer.from(await data.arrayBuffer());
+  }
+
   /** URL temporal para un archivo de un bucket privado. */
   async createSignedUrl(
     bucket: BucketName,

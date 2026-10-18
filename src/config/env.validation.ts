@@ -60,6 +60,10 @@ export const envValidationSchema: Joi.ObjectSchema<Record<string, unknown>> =
         then: Joi.string().uri({ scheme: ['https'] }),
       }),
 
+    // Chromium de los boletines: sin sandbox solo en contenedores que corren
+    // como root y no lo permiten (en lo posible, usar un usuario sin privilegios).
+    PDF_CHROMIUM_NO_SANDBOX: Joi.boolean().default(false),
+
     THROTTLE_DISABLED: Joi.boolean()
       .default(false)
       .when('NODE_ENV', { is: 'production', then: Joi.valid(false) }),

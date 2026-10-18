@@ -13,6 +13,7 @@ import { AuthModule } from './modules/auth/auth.module';
 import { EnrollmentsModule } from './modules/enrollments/enrollments.module';
 import { EvaluationsModule } from './modules/evaluations/evaluations.module';
 import { InstitutionsModule } from './modules/institutions/institutions.module';
+import { ReportsModule } from './modules/reports/reports.module';
 import { SecurityModule } from './modules/security/security.module';
 import { UsersModule } from './modules/users/users.module';
 import { StorageModule } from './storage/storage.module';
@@ -46,6 +47,7 @@ import { StorageModule } from './storage/storage.module';
     AcademicModule,
     EnrollmentsModule,
     EvaluationsModule,
+    ReportsModule,
   ],
   controllers: [HealthController],
   providers: [{ provide: APP_FILTER, useClass: AllExceptionsFilter }],

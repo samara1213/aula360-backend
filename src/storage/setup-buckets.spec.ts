@@ -24,7 +24,8 @@ describe('setupBuckets', () => {
           error: null,
         };
       }
-      const cfg = BUCKETS['report-cards'];
+      // Los demás ya existen tal como se configuran.
+      const cfg = BUCKETS[id as keyof typeof BUCKETS];
       return {
         data: {
           public: cfg.public,
@@ -41,6 +42,7 @@ describe('setupBuckets', () => {
       avatars: 'creado',
       logos: 'actualizado',
       'report-cards': 'sin cambios',
+      'report-templates': 'sin cambios',
     });
     expect(api.createBucket).toHaveBeenCalledWith('avatars', BUCKETS.avatars);
     expect(api.updateBucket).toHaveBeenCalledWith('logos', BUCKETS.logos);

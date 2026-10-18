@@ -33,7 +33,11 @@ export const CACHE_CONTROL: Record<string, string> = {
   avatars: '60',
   logos: '3600',
   'report-cards': '60',
+  'report-templates': '60',
 };
+
+/** Tamaño máximo de una plantilla HTML de boletín. */
+export const TEMPLATE_MAX_BYTES = 256 * 1024;
 
 /**
  * Buckets de Aula360. Los límites se repiten en Supabase (storage:setup) como
@@ -55,6 +59,11 @@ export const BUCKETS = {
     public: false,
     fileSizeLimit: 10 * 1024 * 1024,
     allowedMimeTypes: ['application/pdf'],
+  },
+  'report-templates': {
+    public: false,
+    fileSizeLimit: TEMPLATE_MAX_BYTES,
+    allowedMimeTypes: ['text/html'],
   },
 } satisfies Record<string, BucketConfig>;
 

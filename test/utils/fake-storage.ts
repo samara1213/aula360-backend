@@ -12,7 +12,7 @@ import {
  */
 export class FakeStorageService implements Pick<
   StorageService,
-  'upload' | 'removeQuietly' | 'createSignedUrl' | 'publicUrl'
+  'upload' | 'removeQuietly' | 'createSignedUrl' | 'publicUrl' | 'download'
 > {
   readonly objects = new Map<string, ValidatedFile>();
 
@@ -28,6 +28,14 @@ export class FakeStorageService implements Pick<
     const path = buildObjectPath(prefix, file.extension);
     this.objects.set(`${bucket}/${path}`, file);
     return Promise.resolve(path);
+  }
+
+  download(bucket: BucketName, path: string): Promise<Buffer> {
+    const file = this.objects.get(`${bucket}/${path}`);
+    if (!file) {
+      return Promise.reject(new Error(`No existe ${bucket}/${path}`));
+    }
+    return Promise.resolve(file.buffer);
   }
 
   removeQuietly(bucket: BucketName, path: string): Promise<void> {

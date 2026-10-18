@@ -113,6 +113,12 @@ export const BASE_MENU: SeedMenuOption[] = [
         icon: 'user-plus',
         displayOrder: 7,
       },
+      {
+        slug: 'academic.performance-levels',
+        name: 'Niveles de desempeño',
+        icon: 'award',
+        displayOrder: 8,
+      },
     ],
   },
   {

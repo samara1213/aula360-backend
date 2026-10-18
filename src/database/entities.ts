@@ -11,6 +11,8 @@ import { EvaluationEntity } from '../modules/evaluations/entities/evaluation.ent
 import { ScoreEntity } from '../modules/evaluations/entities/score.entity';
 import { CampusEntity } from '../modules/institutions/entities/campus.entity';
 import { InstitutionEntity } from '../modules/institutions/entities/institution.entity';
+import { PerformanceLevelEntity } from '../modules/reports/entities/performance-level.entity';
+import { ReportCardTemplateEntity } from '../modules/reports/entities/report-card-template.entity';
 import { ReportCardEntity } from '../modules/reports/entities/report-card.entity';
 import { MenuOptionEntity } from '../modules/security/entities/menu-option.entity';
 import { RoleMenuPermissionEntity } from '../modules/security/entities/role-menu-permission.entity';
@@ -20,7 +22,7 @@ import { StudentEntity } from '../modules/users/entities/student.entity';
 import { TeacherEntity } from '../modules/users/entities/teacher.entity';
 import { UserEntity } from '../modules/users/entities/user.entity';
 
-/** Todas las entidades del esquema (scrip_base_datos_v2.sql). */
+/** Todas las entidades del esquema (scrip_base_datos_v2.sql y migraciones posteriores). */
 export const ALL_ENTITIES = [
   InstitutionEntity,
   CampusEntity,
@@ -43,4 +45,6 @@ export const ALL_ENTITIES = [
   EvaluationEntity,
   ScoreEntity,
   ReportCardEntity,
+  PerformanceLevelEntity,
+  ReportCardTemplateEntity,
 ];

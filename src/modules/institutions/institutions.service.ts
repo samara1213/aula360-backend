@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -23,6 +24,10 @@ import { rejectNullFields } from '../../common/validators/reject-null-fields';
 import { ValidatedFile } from '../../storage/image-file.pipe';
 import { StorageService } from '../../storage/storage.service';
 import { ScoreEntity } from '../evaluations/entities/score.entity';
+import {
+  defaultLevelsFor,
+  replaceLevels,
+} from '../reports/performance-levels.rules';
 import { PermissionsReader } from '../security/permissions-reader.service';
 import { CreateInstitutionDto } from './dto/create-institution.dto';
 import { InstitutionResponseDto } from './dto/institution-response.dto';
@@ -51,6 +56,8 @@ const LOGO_BUCKET = 'logos';
  */
 @Injectable()
 export class InstitutionsService {
+  private readonly logger = new Logger(InstitutionsService.name);
+
   constructor(
     @InjectRepository(InstitutionEntity)
     private readonly institutions: Repository<InstitutionEntity>,
@@ -99,7 +106,15 @@ export class InstitutionsService {
       name: dto.name,
       ...scale,
     });
-    return this.toDto(await this.save(entity));
+    // Con sus niveles de desempeño por defecto (los nacionales en escala 1-5).
+    return this.dataSource.transaction(async (manager) => {
+      const saved = await this.save(
+        entity,
+        manager.getRepository(InstitutionEntity),
+      );
+      await replaceLevels(manager, saved.id, defaultLevelsFor(scale));
+      return this.toDto(saved);
+    });
   }
 
   async update(
@@ -130,6 +145,8 @@ export class InstitutionsService {
         passingScore: dto.passingScore ?? entity.passingScore,
       };
       this.assertValidScale(scale);
+      const previousMin = entity.gradingScaleMin;
+      const previousMax = entity.gradingScaleMax;
       const scaleChanged =
         scale.gradingScaleMin !== entity.gradingScaleMin ||
         scale.gradingScaleMax !== entity.gradingScaleMax ||
@@ -143,7 +160,24 @@ export class InstitutionsService {
       if (dto.nit !== undefined) entity.nit = dto.nit;
       if (dto.name !== undefined) entity.name = dto.name;
       Object.assign(entity, scale);
-      return this.toDto(await this.save(entity, repo));
+      const saved = await this.save(entity, repo);
+      // Los niveles de la escala anterior ya no la cubren: se reinician.
+      if (
+        scale.gradingScaleMin !== previousMin ||
+        scale.gradingScaleMax !== previousMax
+      ) {
+        const defaults = defaultLevelsFor(scale);
+        await replaceLevels(manager, id, defaults);
+        this.logger.log(
+          JSON.stringify({
+            audit: 'performance-levels.reset',
+            institutionId: id,
+            reason: 'scale-changed',
+            levels: defaults.map((l) => l.name),
+          }),
+        );
+      }
+      return this.toDto(saved);
     });
   }
 

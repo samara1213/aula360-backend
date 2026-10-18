@@ -9,6 +9,7 @@ import { getRepositoryToken } from '@nestjs/typeorm';
 import { DataSource, QueryFailedError } from 'typeorm';
 import { AuthUser } from '../../common/interfaces/auth-user.interface';
 import { StorageService } from '../../storage/storage.service';
+import { PerformanceLevelEntity } from '../reports/entities/performance-level.entity';
 import { ScoreEntity } from '../evaluations/entities/score.entity';
 import { PermissionsReader } from '../security/permissions-reader.service';
 import { InstitutionEntity } from './entities/institution.entity';
@@ -60,9 +61,14 @@ describe('InstitutionsService', () => {
     getExists: jest.fn(),
   };
   const scores = { createQueryBuilder: jest.fn(() => scoresQb) };
+  const levels = { delete: jest.fn(), insert: jest.fn() };
   const manager = {
     getRepository: jest.fn((entity: unknown) =>
-      entity === ScoreEntity ? scores : repo,
+      entity === ScoreEntity
+        ? scores
+        : entity === PerformanceLevelEntity
+          ? levels
+          : repo,
     ),
   };
   const dataSource = {
@@ -149,6 +155,24 @@ describe('InstitutionsService', () => {
         passingScore: 3,
       });
       expect(result.passingScore).toBe(3);
+      // Con los niveles nacionales, en la misma transacción.
+      expect(dataSource.transaction).toHaveBeenCalled();
+      expect(
+        (levels.insert.mock.calls as [{ name: string }[]][])[0][0].map(
+          (l) => l.name,
+        ),
+      ).toEqual(['Bajo', 'Básico', 'Alto', 'Superior']);
+    });
+
+    it('con otra escala, sin niveles por defecto', async () => {
+      await service.create({
+        nit: '900',
+        name: 'C',
+        gradingScaleMin: 0,
+        gradingScaleMax: 10,
+        passingScore: 6,
+      });
+      expect(levels.insert).not.toHaveBeenCalled();
     });
 
     it('400 si el mínimo no es menor que el máximo', async () => {
@@ -178,6 +202,20 @@ describe('InstitutionsService', () => {
   });
 
   describe('update', () => {
+    it('al cambiar la escala reinicia los niveles; si no, no los toca', async () => {
+      repo.findOne.mockResolvedValue(institution());
+      scoresQb.getExists.mockResolvedValue(false);
+      await service.update('inst-1', { name: 'N' });
+      expect(levels.delete).not.toHaveBeenCalled();
+      await service.update('inst-1', {
+        gradingScaleMin: 0,
+        gradingScaleMax: 10,
+        passingScore: 6,
+      });
+      expect(levels.delete).toHaveBeenCalledWith({ institutionId: 'inst-1' });
+      expect(levels.insert).not.toHaveBeenCalled();
+    });
+
     it('bloquea la fila dentro de una transacción', async () => {
       repo.findOne.mockResolvedValue(institution());
       await service.update('inst-1', { name: 'N' });

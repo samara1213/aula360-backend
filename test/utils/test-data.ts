@@ -30,6 +30,7 @@ const ACADEMIC_CLEANUP = (institutionsSql: string): string[] => {
   return [
     `DELETE FROM scores WHERE evaluation_id IN (${evaluations})`,
     `DELETE FROM report_cards WHERE course_id IN (${courses}) OR period_id IN (${periods})`,
+    `DELETE FROM report_card_templates WHERE institution_id IN (${institutionsSql})`,
     `DELETE FROM evaluations WHERE id IN (${evaluations})`,
     `DELETE FROM enrollments WHERE course_id IN (${courses}) OR academic_year_id IN (${years})`,
     `DELETE FROM teacher_subject_courses WHERE course_id IN (${courses})`,

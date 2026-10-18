@@ -13,6 +13,8 @@ import {
 import { CourseEntity } from '../../academic/entities/course.entity';
 import { PeriodEntity } from '../../academic/entities/period.entity';
 import { StudentEntity } from '../../users/entities/student.entity';
+import { UserEntity } from '../../users/entities/user.entity';
+import { ReportCardTemplateEntity } from './report-card-template.entity';
 import { decimalTransformer } from '../../../database/transformers/decimal.transformer';
 
 /** pdf_path es la ruta en Supabase Storage; se accede con URL firmada. */
@@ -20,6 +22,8 @@ import { decimalTransformer } from '../../../database/transformers/decimal.trans
 @Unique('report_cards_student_id_period_id_key', ['studentId', 'periodId'])
 @Index('idx_report_cards_period_course', ['periodId', 'courseId'])
 @Index('idx_report_cards_course', ['courseId'])
+@Index('idx_report_cards_template', ['templateId'])
+@Index('idx_report_cards_generated_by', ['generatedBy'])
 @Check('chk_report_cards_average', 'final_average >= 0')
 export class ReportCardEntity {
   @PrimaryGeneratedColumn('uuid', {
@@ -68,6 +72,34 @@ export class ReportCardEntity {
 
   @Column({ name: 'pdf_path', type: 'varchar', length: 500, nullable: true })
   pdfPath: string | null;
+
+  /** Plantilla con la que se generó; null = la plantilla del sistema. */
+  @Column({ name: 'template_id', type: 'uuid', nullable: true })
+  templateId: string | null;
+
+  @ManyToOne(() => ReportCardTemplateEntity, {
+    nullable: true,
+    onDelete: 'RESTRICT',
+  })
+  @JoinColumn({
+    name: 'template_id',
+    foreignKeyConstraintName: 'report_cards_template_id_fkey',
+  })
+  template: ReportCardTemplateEntity | null;
+
+  /** Desde cuándo sus notas cambiaron; null = vigente (hay que regenerarlo). */
+  @Column({ name: 'outdated_at', type: 'timestamptz', nullable: true })
+  outdatedAt: Date | null;
+
+  @Column({ name: 'generated_by', type: 'uuid', nullable: true })
+  generatedBy: string | null;
+
+  @ManyToOne(() => UserEntity, { nullable: true, onDelete: 'SET NULL' })
+  @JoinColumn({
+    name: 'generated_by',
+    foreignKeyConstraintName: 'report_cards_generated_by_fkey',
+  })
+  generatedByUser: UserEntity | null;
 
   @CreateDateColumn({
     name: 'created_at',
