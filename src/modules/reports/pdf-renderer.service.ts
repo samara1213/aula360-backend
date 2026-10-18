@@ -9,69 +9,95 @@ import {
 import { ConfigService } from '@nestjs/config';
 import * as puppeteer from 'puppeteer';
 
-/** Tiempo máximo para cargar el HTML y para imprimir el PDF. */
-const RENDER_TIMEOUT_MS = 15_000;
 /** Páginas de Chromium a la vez (memoria acotada en generación masiva). */
 const MAX_CONCURRENT_PAGES = 2;
-/** Renders en espera y cuánto esperan como máximo (después, 503). */
+/** Renders en espera como máximo (después, 503). */
 const MAX_QUEUED = 50;
-const QUEUE_TIMEOUT_MS = 30_000;
 /** Un boletín no debería pasar de unas pocas páginas. */
 const MAX_PAGES = 20;
 export const MAX_PDF_BYTES = 10 * 1024 * 1024;
 
+class StepTimeoutError extends Error {}
+
 /**
- * HTML -> PDF con un Chromium por proceso (se lanza al primer uso y se relanza
- * si se cae). Endurecido porque la plantilla es HTML ajeno:
- * - sin JavaScript y en modo sin conexión;
- * - toda petición se aborta salvo los data: (sin red, sin file://, sin
- *   redirecciones por <meta refresh>): el logo llega embebido;
- * - sin resolución DNS y con un proxy inexistente, también para loopback:
- *   ni dns-prefetch ni preconnect salen del proceso (hallazgo M4, fase 10a);
- * - un contexto de navegador aislado por render (sin caché compartida);
- * - tiempo máximo, como máximo 20 páginas y 10 MB; la página y el contexto
- *   siempre se cierran;
+ * HTML -> PDF con un Chromium por proceso. Endurecido porque la plantilla es
+ * HTML ajeno:
+ * - sin JavaScript y en modo sin conexión; toda petición se aborta salvo los
+ *   data: (sin red, sin file://, sin <meta refresh>); el logo va embebido;
+ * - sin resolución DNS y con un proxy inexistente, también para loopback
+ *   (hallazgo M4 de la fase 10a);
+ * - un contexto de navegador aislado por render; máximo 20 páginas y 10 MB;
  * - cola acotada: con demasiados renders en espera responde 503.
+ *
+ * Y se recupera solo (un Chromium colgado no debe exigir reiniciar el backend):
+ * - cada paso con Chromium tiene tiempo máximo, también abrir y cerrar el
+ *   contexto: un paso colgado nunca deja ocupado un cupo;
+ * - ante un tiempo agotado o un error de Chromium, el navegador se mata
+ *   (SIGKILL) y el siguiente render lanza uno nuevo; si el proceso muere solo
+ *   ('disconnected'), también;
+ * - se recicla cada cierto número de renders (la memoria de Chromium crece);
+ * - los continue/abort de la interceptación nunca dejan promesas rechazadas
+ *   sin manejar (tumbarían el proceso de Node).
  * En producción, además, el contenedor no debería tener salida a la red.
  */
 @Injectable()
 export class PdfRendererService implements OnModuleDestroy {
   private readonly logger = new Logger(PdfRendererService.name);
   private browser: Promise<puppeteer.Browser> | null = null;
+  private rendersOnBrowser = 0;
   private active = 0;
   private readonly waiting: (() => void)[] = [];
+
+  /** Tiempos y reciclaje (protegidos para poder acortarlos en las pruebas). */
+  protected stepTimeoutMs = 15_000;
+  protected closeTimeoutMs = 5_000;
+  protected launchTimeoutMs = 30_000;
+  protected queueTimeoutMs = 30_000;
+  protected maxRendersPerBrowser = 200;
 
   constructor(private readonly config: ConfigService) {}
 
   async render(html: string): Promise<Buffer> {
     await this.acquire();
     let context: puppeteer.BrowserContext | undefined;
+    let browser: Promise<puppeteer.Browser> | null = null;
+    let broken = false;
     try {
-      const browser = await this.getBrowser();
-      context = await browser.createBrowserContext();
-      const page = await context.newPage();
-      await page.setJavaScriptEnabled(false);
-      await page.setOfflineMode(true);
-      await page.setRequestInterception(true);
+      browser = this.getBrowser();
+      const instance = await this.step(browser, 'abrir Chromium');
+      this.rendersOnBrowser++;
+      context = await this.step(
+        instance.createBrowserContext(),
+        'crear el contexto',
+      );
+      const page = await this.step(context.newPage(), 'abrir la página');
+      await this.step(page.setJavaScriptEnabled(false), 'configurar');
+      await this.step(page.setOfflineMode(true), 'configurar');
+      await this.step(page.setRequestInterception(true), 'configurar');
       page.on('request', (request) => {
-        if (request.url().startsWith('data:')) {
-          void request.continue();
-        } else {
-          void request.abort('blockedbyclient');
-        }
+        const handled = request.url().startsWith('data:')
+          ? request.continue()
+          : request.abort('blockedbyclient');
+        handled.catch(() => undefined);
       });
-      await page.setContent(html, {
-        waitUntil: 'load',
-        timeout: RENDER_TIMEOUT_MS,
-      });
-      const pdf = Buffer.from(
-        await page.pdf({
-          printBackground: true,
-          preferCSSPageSize: true,
-          format: 'Letter',
-          pageRanges: `1-${MAX_PAGES}`,
-          timeout: RENDER_TIMEOUT_MS,
+      await this.step(
+        page.setContent(html, {
+          waitUntil: 'load',
+          timeout: this.stepTimeoutMs,
         }),
+        'cargar el HTML',
+      );
+      const pdf = Buffer.from(
+        await this.step(
+          page.pdf({
+            printBackground: true,
+            preferCSSPageSize: true,
+            format: 'Letter',
+            pageRanges: `1-${MAX_PAGES}`,
+            timeout: this.stepTimeoutMs,
+          }),
+          'imprimir el PDF',
+        ),
       );
       if (pdf.length > MAX_PDF_BYTES) {
         throw new UnprocessableEntityException(
@@ -81,20 +107,39 @@ export class PdfRendererService implements OnModuleDestroy {
       return pdf;
     } catch (error) {
       if (error instanceof HttpException) throw error;
+      broken = true;
       this.logger.error(
         `No se pudo generar el PDF: ${(error as Error).message}`,
       );
       throw new ServiceUnavailableException('No se pudo generar el PDF');
     } finally {
-      await context?.close().catch(() => undefined);
+      if (context) {
+        try {
+          await this.step(
+            context.close(),
+            'cerrar el contexto',
+            this.closeTimeoutMs,
+          );
+        } catch {
+          broken = true;
+        }
+      }
+      if (browser && broken) {
+        void this.restart(browser, 'falló o no respondió');
+      } else if (
+        browser &&
+        this.rendersOnBrowser >= this.maxRendersPerBrowser &&
+        this.active === 1
+      ) {
+        void this.restart(browser, 'reciclaje', false);
+      }
       this.release();
     }
   }
 
   async onModuleDestroy(): Promise<void> {
-    const browser = this.browser;
-    this.browser = null;
-    if (browser) await (await browser.catch(() => null))?.close();
+    if (this.browser)
+      await this.restart(this.browser, 'apagado del backend', false);
   }
 
   private getBrowser(): Promise<puppeteer.Browser> {
@@ -102,6 +147,7 @@ export class PdfRendererService implements OnModuleDestroy {
       const noSandbox = this.config.get<boolean>('PDF_CHROMIUM_NO_SANDBOX');
       const launching = puppeteer.launch({
         headless: true,
+        timeout: this.launchTimeoutMs,
         args: [
           '--disable-dev-shm-usage',
           '--disable-extensions',
@@ -114,10 +160,14 @@ export class PdfRendererService implements OnModuleDestroy {
         ],
       });
       this.browser = launching;
+      this.rendersOnBrowser = 0;
       launching.then(
         (browser) =>
           browser.on('disconnected', () => {
-            if (this.browser === launching) this.browser = null;
+            if (this.browser === launching) {
+              this.logger.warn('Chromium se cerró: se lanzará otro');
+              this.browser = null;
+            }
           }),
         () => {
           if (this.browser === launching) this.browser = null;
@@ -125,6 +175,55 @@ export class PdfRendererService implements OnModuleDestroy {
       );
     }
     return this.browser;
+  }
+
+  /**
+   * Descarta este navegador (el siguiente render lanza otro) y lo cierra en
+   * segundo plano; si no cierra a tiempo, o si falló, se mata el proceso.
+   */
+  private restart(
+    target: Promise<puppeteer.Browser>,
+    reason: string,
+    kill = true,
+  ): Promise<void> {
+    if (this.browser === target) this.browser = null;
+    this.logger.warn(`Reiniciando Chromium (${reason})`);
+    return target
+      .then(async (browser) => {
+        const process = browser.process();
+        if (kill) {
+          process?.kill('SIGKILL');
+          return;
+        }
+        try {
+          await this.step(
+            browser.close(),
+            'cerrar Chromium',
+            this.closeTimeoutMs,
+          );
+        } catch {
+          process?.kill('SIGKILL');
+        }
+      })
+      .catch(() => undefined);
+  }
+
+  /** Espera la promesa como máximo ms; si no, StepTimeoutError. */
+  private step<T>(
+    promise: Promise<T>,
+    label: string,
+    ms = this.stepTimeoutMs,
+  ): Promise<T> {
+    let timer: NodeJS.Timeout | undefined;
+    const timeout = new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(
+        () => reject(new StepTimeoutError(`Chromium no respondió al ${label}`)),
+        ms,
+      );
+    });
+    // Si gana el tiempo máximo, un rechazo tardío de la promesa no queda suelto.
+    promise.catch(() => undefined);
+    return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
   }
 
   private async acquire(): Promise<void> {
@@ -150,7 +249,7 @@ export class PdfRendererService implements OnModuleDestroy {
             'Hay demasiados PDF en proceso, intente de nuevo',
           ),
         );
-      }, QUEUE_TIMEOUT_MS);
+      }, this.queueTimeoutMs);
       this.waiting.push(turn);
     });
   }

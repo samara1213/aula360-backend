@@ -102,4 +102,76 @@ describe('PdfRendererService (Chromium real)', () => {
       ServiceUnavailableException,
     );
   });
+
+  describe('recuperación sin reiniciar el backend', () => {
+    type Internals = {
+      stepTimeoutMs: number;
+      maxRendersPerBrowser: number;
+      browser: Promise<{
+        process: () => { pid?: number; kill: (s: string) => void } | null;
+      }> | null;
+      getBrowser: () => Promise<unknown>;
+    };
+    const fresh = () => {
+      const r = new PdfRendererService({
+        get: () => false,
+      } as unknown as ConfigService);
+      return { renderer: r, internals: r as unknown as Internals };
+    };
+
+    it('Chromium colgado: cada render falla a tiempo, se mata el proceso y no se traban los cupos', async () => {
+      const { renderer: hung, internals } = fresh();
+      internals.stepTimeoutMs = 300;
+      const kill = jest.fn();
+      const fake = {
+        createBrowserContext: () => new Promise(() => undefined),
+        process: () => ({ kill }),
+      };
+      const spy = jest.spyOn(internals, 'getBrowser').mockImplementation(() => {
+        internals.browser = Promise.resolve(fake);
+        return internals.browser;
+      });
+      const started = Date.now();
+      // Más renders que cupos (2): ninguno queda esperando para siempre.
+      const results = await Promise.allSettled(
+        [1, 2, 3, 4].map(() => hung.render('<p>x</p>')),
+      );
+      expect(results.every((r) => r.status === 'rejected')).toBe(true);
+      expect(Date.now() - started).toBeLessThan(5_000);
+      expect(kill).toHaveBeenCalledWith('SIGKILL');
+      // Chromium vuelve a responder: el mismo servicio genera de nuevo.
+      spy.mockRestore();
+      internals.browser = null;
+      internals.stepTimeoutMs = 15_000;
+      const pdf = await hung.render('<p>de nuevo</p>');
+      expect(pdf.subarray(0, 5).toString()).toBe('%PDF-');
+      await hung.onModuleDestroy();
+    });
+
+    it('si el proceso de Chromium muere, el siguiente render lanza otro', async () => {
+      const { renderer: r, internals } = fresh();
+      await r.render('<p>1</p>');
+      const first = await internals.browser!;
+      first.process()?.kill('SIGKILL');
+      // El que coincide con la caída puede fallar; el siguiente debe funcionar.
+      await r.render('<p>2</p>').catch(() => undefined);
+      const pdf = await r.render('<p>3</p>');
+      expect(pdf.subarray(0, 5).toString()).toBe('%PDF-');
+      expect((await internals.browser!).process()?.pid).not.toBe(
+        first.process()?.pid,
+      );
+      await r.onModuleDestroy();
+    });
+
+    it('se recicla cada cierto número de renders', async () => {
+      const { renderer: r, internals } = fresh();
+      internals.maxRendersPerBrowser = 2;
+      await r.render('<p>1</p>');
+      const pid = (await internals.browser!).process()?.pid;
+      await r.render('<p>2</p>');
+      await r.render('<p>3</p>');
+      expect((await internals.browser!).process()?.pid).not.toBe(pid);
+      await r.onModuleDestroy();
+    });
+  });
 });
