@@ -347,13 +347,30 @@ describe('ManagedUsersService', () => {
       );
     });
 
-    it('cambiar nombres no exige exclusividad', async () => {
-      outsideQb.getExists.mockResolvedValue(true);
+    it('cambiar nombres de un usuario exclusivo se aplica', async () => {
       await service.update(institution, 'user-1', { firstName: 'X' });
       expect(userRepo.update).toHaveBeenCalledWith(
         { id: 'user-1' },
         { firstName: 'X' },
       );
+    });
+
+    it('cambiar nombres o teléfono de un usuario de varias instituciones: 403 (V1 de la fase 11c)', async () => {
+      outsideQb.getExists.mockResolvedValue(true);
+      for (const dto of [{ firstName: 'X' }, { phone: '+57 300 1' }]) {
+        await expect(
+          service.update(institution, 'user-1', dto),
+        ).rejects.toThrow('Este cambio solo lo puede hacer un SUPER_ADMIN');
+      }
+      expect(userRepo.update).not.toHaveBeenCalled();
+    });
+
+    it('reenviar los mismos datos de un usuario de varias instituciones no escribe nada', async () => {
+      outsideQb.getExists.mockResolvedValue(true);
+      await service.update(institution, 'user-1', {
+        firstName: 'Ana',
+      });
+      expect(userRepo.update).not.toHaveBeenCalled();
     });
 
     it('cambiar el documento de un usuario de varias instituciones: 403 genérico', async () => {
@@ -384,8 +401,19 @@ describe('ManagedUsersService', () => {
       expect(emailVerification.cancelPending).toHaveBeenCalledWith(
         manager,
         'user-1',
+        undefined,
       );
       expect(emailVerification.notify).toHaveBeenCalledWith(null);
+    });
+
+    it('el mismo email de un usuario de varias instituciones solo anula lo pedido desde esta (V1)', async () => {
+      outsideQb.getExists.mockResolvedValue(true);
+      await service.update(institution, 'user-1', { email: 'ANA@colegio.co' });
+      expect(emailVerification.cancelPending).toHaveBeenCalledWith(
+        manager,
+        'user-1',
+        'inst-A',
+      );
     });
 
     it('cambiar el email de un usuario de varias instituciones: 403 genérico', async () => {

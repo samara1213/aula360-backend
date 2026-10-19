@@ -122,10 +122,22 @@ export class EmailVerificationService {
    * Inutiliza los enlaces vigentes del usuario (cancela un cambio pendiente).
    * Devuelve cuántos había.
    */
-  async cancelPending(manager: EntityManager, userId: string): Promise<number> {
+  async cancelPending(
+    manager: EntityManager,
+    userId: string,
+    institutionId?: string,
+  ): Promise<number> {
     const result = await manager
       .getRepository(EmailVerificationTokenEntity)
-      .update({ userId, usedAt: IsNull() }, { usedAt: new Date() });
+      .update(
+        {
+          userId,
+          usedAt: IsNull(),
+          // Solo los pedidos desde esa institución (usuario compartido).
+          ...(institutionId ? { institutionId } : {}),
+        },
+        { usedAt: new Date() },
+      );
     return result.affected ?? 0;
   }
 
@@ -374,16 +386,21 @@ export class EmailVerificationService {
   async pendingEmails(
     manager: EntityManager,
     userIds: string[],
+    institutionId?: string,
   ): Promise<Map<string, string>> {
     if (!userIds.length) return new Map();
+    // Con institutionId (quien mira no es SUPER_ADMIN) solo cuentan los
+    // cambios del propio usuario o pedidos desde esa institución: un cambio
+    // que pidió otra institución no se le muestra (V5 de la fase 11c).
     const rows = await manager.query<{ user_id: string; email: string }[]>(
       `SELECT t.user_id, t.email
          FROM email_verification_tokens t
          JOIN users u ON u.id = t.user_id
         WHERE t.user_id = ANY($1::uuid[])
           AND t.used_at IS NULL AND t.expires_at > CURRENT_TIMESTAMP
-          AND t.email IS DISTINCT FROM u.email`,
-      [userIds],
+          AND t.email IS DISTINCT FROM u.email
+          AND ($2::uuid IS NULL OR t.requested_by = t.user_id OR t.institution_id = $2::uuid)`,
+      [userIds, institutionId ?? null],
     );
     return new Map(rows.map((r) => [r.user_id, r.email]));
   }

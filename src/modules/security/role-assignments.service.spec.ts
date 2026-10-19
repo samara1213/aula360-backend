@@ -6,7 +6,7 @@ import {
 } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
-import { DataSource, In, QueryFailedError } from 'typeorm';
+import { DataSource, In, IsNull, QueryFailedError } from 'typeorm';
 import { AuthUser } from '../../common/interfaces/auth-user.interface';
 import { CampusEntity } from '../institutions/entities/campus.entity';
 import { InstitutionEntity } from '../institutions/entities/institution.entity';
@@ -191,14 +191,18 @@ describe('RoleAssignmentsService', () => {
       );
     });
 
-    it('404 si el rol es de otra institución', async () => {
-      roleRepo.findOne.mockResolvedValue({
-        id: 'role-1',
-        institutionId: 'inst-B',
-      });
+    it('404 si el rol es de otra institución: el filtro va en la consulta que bloquea (V4)', async () => {
+      roleRepo.findOne.mockResolvedValue(null);
       await expect(service.create(institution, dto)).rejects.toBeInstanceOf(
         NotFoundException,
       );
+      expect(roleRepo.findOne).toHaveBeenCalledWith({
+        where: [
+          { id: dto.roleId, institutionId: IsNull() },
+          { id: dto.roleId, institutionId: 'inst-A' },
+        ],
+        lock: { mode: 'pessimistic_read' },
+      });
     });
 
     it('404 si la sede es de otra institución y 400 si está inactiva', async () => {

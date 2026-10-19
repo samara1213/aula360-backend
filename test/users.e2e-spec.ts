@@ -376,12 +376,19 @@ describe('Usuarios (e2e)', () => {
   });
 
   describe('PATCH /users/:id', () => {
-    it('edita nombres de un usuario que también está en otra institución', async () => {
-      const res = await adminA
+    it('nombres de un usuario que también está en otra institución: 403 (V1 de la fase 11c)', async () => {
+      const before = await ctx.dataSource
+        .getRepository(UserEntity)
+        .findOneByOrFail({ id: sharedUser.id });
+      await adminA
         .patch(`/api/users/${sharedUser.id}`)
         .send({ firstName: 'Compartido' })
-        .expect(200);
-      expect(res.body.firstName).toBe('Compartido');
+        .expect(403);
+      const after = await ctx.dataSource
+        .getRepository(UserEntity)
+        .findOneByOrFail({ id: sharedUser.id });
+      expect(after.firstName).toBe(before.firstName);
+      expect(after.updatedAt).toEqual(before.updatedAt);
     });
 
     it('email de un usuario de varias instituciones: 403 (exclusividad)', async () => {

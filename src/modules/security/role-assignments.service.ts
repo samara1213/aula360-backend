@@ -10,6 +10,7 @@ import {
   DataSource,
   EntityManager,
   In,
+  IsNull,
   QueryFailedError,
   Repository,
 } from 'typeorm';
@@ -147,17 +148,16 @@ export class RoleAssignmentsService {
       }
     }
 
-    // FOR SHARE: sus permisos no cambian mientras se evalúa el techo.
+    // FOR SHARE: sus permisos no cambian mientras se evalúa el techo. La
+    // institución va en la misma consulta: no se bloquean roles de otra (V4).
     const role = await manager.getRepository(RoleEntity).findOne({
-      where: { id: roleId },
+      where: [
+        { id: roleId, institutionId: IsNull() },
+        { id: roleId, institutionId },
+      ],
       lock: { mode: 'pessimistic_read' },
     });
-    if (
-      !role ||
-      (role.institutionId !== null && role.institutionId !== institutionId)
-    ) {
-      throw new NotFoundException('Rol no encontrado');
-    }
+    if (!role) throw new NotFoundException('Rol no encontrado');
 
     if (campusId) {
       const campus = await manager

@@ -81,10 +81,11 @@ export type UsersScope = AssignmentScope;
  *   sedes). Lo demás responde 404, sin revelar si existe.
  * - Nadie se gestiona a sí mismo por aquí; a un SUPER_ADMIN solo otro SUPER_ADMIN.
  * - Techo: no se gestiona a quien tiene permisos que quien actúa no tiene.
- * - Exclusividad: email, documento, contraseña temporal y activar/desactivar
- *   solo si todas sus asignaciones están en esta institución y en las sedes
- *   de quien actúa (o lo hace un SUPER_ADMIN). Evita que un colegio tome la
- *   cuenta de alguien que también es administrador en otro.
+ * - Exclusividad: cualquier cambio en users (nombres, teléfono, email,
+ *   documento), contraseña temporal y activar/desactivar solo si todas sus
+ *   asignaciones están en esta institución y en las sedes de quien actúa (o
+ *   lo hace un SUPER_ADMIN). Evita que un colegio tome o altere la cuenta de
+ *   alguien que también está en otro (V1 de la fase 11c).
  * - Email de un usuario ya creado (tarea 2.11.6): con exclusividad, queda
  *   pendiente hasta que el dueño del correo nuevo lo confirme con el enlace;
  *   al anterior se le avisa. Quitarlo (null) se aplica de inmediato.
@@ -146,7 +147,11 @@ export class ManagedUsersService implements OnModuleInit {
     const [users, total] = await qb.skip(skip).take(take).getManyAndCount();
     const ids = users.map((u) => u.id);
     const byUser = await this.loadAssignments(manager, scope, campusScope, ids);
-    const pending = await this.emailVerification.pendingEmails(manager, ids);
+    const pending = await this.emailVerification.pendingEmails(
+      manager,
+      ids,
+      this.pendingScope(scope),
+    );
     return paginate(
       users.map((u) =>
         UserResponseDto.from(
@@ -346,23 +351,47 @@ export class ManagedUsersService implements OnModuleInit {
         dto.documentType !== user.documentType) ||
       (dto.documentNumber !== undefined &&
         dto.documentNumber !== user.documentNumber);
-    if (emailChanged || documentChanged) {
-      await this.assertExclusive(manager, scope, user.id, campusScope);
+    const profileChanged =
+      (dto.firstName !== undefined && dto.firstName !== user.firstName) ||
+      (dto.lastName !== undefined && dto.lastName !== user.lastName) ||
+      (dto.phone !== undefined && (dto.phone ?? null) !== user.phone);
+    // La fila de users es una sola para todas las instituciones del usuario:
+    // cualquier cambio exige que sea solo de esta (V1 de la fase 11c). Enviar
+    // los mismos valores (un formulario completo) no cambia nada y se permite.
+    const exclusive = await this.isExclusive(
+      manager,
+      scope,
+      user.id,
+      campusScope,
+    );
+    if ((emailChanged || documentChanged || profileChanged) && !exclusive) {
+      throw new ForbiddenException(SUPER_ADMIN_ONLY);
     }
 
+    // Solo lo que cambia: reenviar los mismos datos no escribe nada.
     const changes: Partial<UserEntity> = {};
-    if (dto.firstName !== undefined) changes.firstName = dto.firstName;
-    if (dto.lastName !== undefined) changes.lastName = dto.lastName;
-    if (dto.phone !== undefined) changes.phone = dto.phone;
+    if (dto.firstName !== undefined && dto.firstName !== user.firstName) {
+      changes.firstName = dto.firstName;
+    }
+    if (dto.lastName !== undefined && dto.lastName !== user.lastName) {
+      changes.lastName = dto.lastName;
+    }
+    if (dto.phone !== undefined && (dto.phone ?? null) !== user.phone) {
+      changes.phone = dto.phone;
+    }
     // Quitarlo se aplica ya; uno nuevo queda pendiente hasta confirmarlo.
     const removeEmail = emailChanged && dto.email === null;
     if (removeEmail) {
       changes.email = null;
       changes.emailVerifiedAt = null;
     }
-    if (dto.documentType !== undefined) changes.documentType = dto.documentType;
-    if (dto.documentNumber !== undefined) {
-      changes.documentNumber = dto.documentNumber;
+    if (documentChanged) {
+      if (dto.documentType !== undefined) {
+        changes.documentType = dto.documentType;
+      }
+      if (dto.documentNumber !== undefined) {
+        changes.documentNumber = dto.documentNumber;
+      }
     }
 
     let notice: EmailNotice | null = null;
@@ -378,7 +407,12 @@ export class ManagedUsersService implements OnModuleInit {
     } else if (
       dto.email !== undefined &&
       !emailChanged &&
-      (await this.emailVerification.cancelPending(manager, user.id)) > 0
+      (await this.emailVerification.cancelPending(
+        manager,
+        user.id,
+        // Sin exclusividad solo anula lo que pidió esta institución (V1).
+        exclusive ? undefined : scope.institutionId,
+      )) > 0
     ) {
       // El mismo email: un administrador anula un cambio pendiente (B3).
       this.audit(scope, 'user.email-change-cancelled', user.id);
@@ -646,7 +680,23 @@ export class ManagedUsersService implements OnModuleInit {
     userId: string,
     campusScope: CampusScope,
   ): Promise<void> {
-    if (this.isSuperAdmin(scope)) return;
+    if (!(await this.isExclusive(manager, scope, userId, campusScope))) {
+      throw new ForbiddenException(SUPER_ADMIN_ONLY);
+    }
+  }
+
+  /** Cambios de email pendientes que puede ver quien consulta (V5). */
+  private pendingScope(scope: UsersScope): string | undefined {
+    return this.isSuperAdmin(scope) ? undefined : scope.institutionId;
+  }
+
+  private async isExclusive(
+    manager: EntityManager,
+    scope: UsersScope,
+    userId: string,
+    campusScope: CampusScope,
+  ): Promise<boolean> {
+    if (this.isSuperAdmin(scope)) return true;
     const outside = manager
       .getRepository(UserInstitutionRoleEntity)
       .createQueryBuilder('uir')
@@ -673,13 +723,11 @@ export class ManagedUsersService implements OnModuleInit {
           institutionId: scope.institutionId,
         })
         .getExists();
-    if (
+    return !(
       (await outside.getExists()) ||
       (await otherProfile(TeacherEntity)) ||
       (await otherProfile(StudentEntity))
-    ) {
-      throw new ForbiddenException(SUPER_ADMIN_ONLY);
-    }
+    );
   }
 
   // ------------------------------------------------------------- consultas
@@ -760,9 +808,11 @@ export class ManagedUsersService implements OnModuleInit {
     const byUser = await this.loadAssignments(manager, scope, campusScope, [
       user.id,
     ]);
-    const pending = await this.emailVerification.pendingEmails(manager, [
-      user.id,
-    ]);
+    const pending = await this.emailVerification.pendingEmails(
+      manager,
+      [user.id],
+      this.pendingScope(scope),
+    );
     return UserResponseDto.from(
       user,
       byUser.get(user.id) ?? [],

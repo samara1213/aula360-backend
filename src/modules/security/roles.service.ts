@@ -10,6 +10,7 @@ import {
   DataSource,
   EntityManager,
   In,
+  IsNull,
   QueryFailedError,
   Repository,
 } from 'typeorm';
@@ -288,16 +289,19 @@ export class RolesService {
     id: string,
     lock = false,
   ): Promise<RoleEntity> {
+    // La institución va en la misma consulta que bloquea: nunca se bloquea
+    // un rol de otra institución (V4 de la fase 11c).
     const role = await repo.findOne({
-      where: { id },
+      where:
+        scope.kind === 'institution'
+          ? [
+              { id, institutionId: IsNull() },
+              { id, institutionId: scope.institutionId },
+            ]
+          : { id, institutionId: IsNull() },
       ...(lock ? { lock: { mode: 'pessimistic_write' as const } } : {}),
     });
-    const visible =
-      role !== null &&
-      (role.institutionId === null ||
-        (scope.kind === 'institution' &&
-          role.institutionId === scope.institutionId));
-    if (!visible) throw new NotFoundException('Rol no encontrado');
+    if (!role) throw new NotFoundException('Rol no encontrado');
     return role;
   }
 

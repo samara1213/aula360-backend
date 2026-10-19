@@ -6,7 +6,7 @@ import {
 } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
-import { DataSource } from 'typeorm';
+import { DataSource, FindOperator } from 'typeorm';
 import { AuthUser } from '../../common/interfaces/auth-user.interface';
 import { MenuOptionEntity } from './entities/menu-option.entity';
 import { RoleMenuPermissionEntity } from './entities/role-menu-permission.entity';
@@ -42,6 +42,23 @@ function role(overrides: Partial<RoleEntity> = {}): RoleEntity {
 
 const M1 = '11111111-1111-4111-8111-111111111111';
 
+type RoleWhere = { id: string; institutionId?: string | FindOperator<unknown> };
+
+/** Como la base: el rol solo vuelve si cumple alguna condición del where. */
+function matches(where: RoleWhere | RoleWhere[], row: RoleEntity | null) {
+  if (!row) return false;
+  return [where]
+    .flat()
+    .some(
+      (c) =>
+        c.id === row.id &&
+        (c.institutionId instanceof FindOperator
+          ? row.institutionId === null
+          : c.institutionId === undefined ||
+            c.institutionId === row.institutionId),
+    );
+}
+
 describe('RolesService', () => {
   let service: RolesService;
   let current: RoleEntity | null;
@@ -55,7 +72,9 @@ describe('RolesService', () => {
     getMany: jest.fn().mockResolvedValue([]),
   };
   const roleRepo = {
-    findOne: jest.fn(() => Promise.resolve(current)),
+    findOne: jest.fn(({ where }: { where: RoleWhere | RoleWhere[] }) =>
+      Promise.resolve(matches(where, current) ? current : null),
+    ),
     create: jest.fn((v: Partial<RoleEntity>) => ({ ...v, id: 'new' })),
     save: jest.fn((v: RoleEntity) => Promise.resolve(v)),
     delete: jest.fn(),
