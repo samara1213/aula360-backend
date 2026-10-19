@@ -28,11 +28,11 @@ describe('Base de datos (e2e)', () => {
     expect(rows.map((r) => r.relname)).toEqual([]);
   });
 
-  it('anon y authenticated no tienen permisos sobre las tablas de la fase 10', async () => {
+  it('anon y authenticated no tienen permisos sobre las tablas creadas después de InitialSchema', async () => {
     const rows = await dataSource.query<{ table_name: string }[]>(
       `SELECT table_name FROM information_schema.role_table_grants
         WHERE table_schema = 'public'
-          AND table_name IN ('performance_levels', 'report_card_templates')
+          AND table_name IN ('performance_levels', 'report_card_templates', 'storage_deletions')
           AND grantee IN ('anon', 'authenticated')`,
     );
     expect(rows).toEqual([]);

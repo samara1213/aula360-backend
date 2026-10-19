@@ -16,6 +16,7 @@ import { AuthUser } from '../../common/interfaces/auth-user.interface';
 import { activeInstitutionId } from '../../common/utils/active-institution';
 import { schoolToday } from '../../common/utils/school-date';
 import { SIGNED_URL_TTL_SECONDS } from '../../storage/storage.constants';
+import { StorageDeletionsService } from '../../storage/storage-deletions.service';
 import { StorageService } from '../../storage/storage.service';
 import { AcademicYearEntity } from '../academic/entities/academic-year.entity';
 import { CourseEntity } from '../academic/entities/course.entity';
@@ -134,6 +135,7 @@ export class ReportCardsService {
     private readonly templates: ReportTemplatesService,
     private readonly renderer: PdfRendererService,
     private readonly storage: StorageService,
+    private readonly deletions: StorageDeletionsService,
   ) {}
 
   async generate(
@@ -377,11 +379,13 @@ export class ReportCardsService {
         return this.save(tx, current, pdfPath, template.templateId, user);
       });
     } catch (error) {
-      await this.discardUpload(pdfPath);
+      // Si la fila sí lo usa (el COMMIT se confirmó pero la respuesta se
+      // perdió, hallazgo B3 de la fase 10b), no se borra.
+      await this.deletions.discard(BUCKET, pdfPath);
       throw error;
     }
     if (saved.previousPath) {
-      await this.storage.removeQuietly(BUCKET, saved.previousPath);
+      await this.deletions.flush(BUCKET, saved.previousPath);
     }
     this.logger.log(
       JSON.stringify({
@@ -398,23 +402,6 @@ export class ReportCardsService {
       }),
     );
     return saved.card;
-  }
-
-  /**
-   * Borra el PDF recién subido si la fila no lo usa: si el COMMIT se
-   * confirmó pero la respuesta se perdió, el archivo sí está guardado
-   * (hallazgo B3 de la fase 10b).
-   */
-  private async discardUpload(pdfPath: string): Promise<void> {
-    try {
-      const used = await this.dataSource
-        .getRepository(ReportCardEntity)
-        .existsBy({ pdfPath });
-      if (used) return;
-    } catch {
-      return; // Sin base no se sabe: mejor un archivo huérfano que un boletín roto.
-    }
-    await this.storage.removeQuietly(BUCKET, pdfPath);
   }
 
   async findAll(
@@ -688,7 +675,10 @@ export class ReportCardsService {
     }
   }
 
-  /** Upsert por (estudiante, periodo); devuelve la ruta del PDF anterior. */
+  /**
+   * Upsert por (estudiante, periodo); anota el borrado del PDF anterior en la
+   * misma transacción y devuelve su ruta.
+   */
   private async save(
     manager: EntityManager,
     snapshot: Snapshot,
@@ -728,6 +718,9 @@ export class ReportCardsService {
     const card = await this.baseQuery(manager, snapshot.institutionId)
       .andWhere('r.id = :id', { id })
       .getOneOrFail();
+    if (previous?.pdfPath) {
+      await this.deletions.schedule(manager, BUCKET, previous.pdfPath);
+    }
     return { card, previousPath: previous?.pdfPath ?? null };
   }
 

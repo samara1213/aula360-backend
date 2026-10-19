@@ -21,6 +21,7 @@ import { UserInstitutionRoleEntity } from '../modules/security/entities/user-ins
 import { StudentEntity } from '../modules/users/entities/student.entity';
 import { TeacherEntity } from '../modules/users/entities/teacher.entity';
 import { UserEntity } from '../modules/users/entities/user.entity';
+import { StorageDeletionEntity } from '../storage/entities/storage-deletion.entity';
 
 /** Todas las entidades del esquema (scrip_base_datos_v2.sql y migraciones posteriores). */
 export const ALL_ENTITIES = [
@@ -47,4 +48,5 @@ export const ALL_ENTITIES = [
   ReportCardEntity,
   PerformanceLevelEntity,
   ReportCardTemplateEntity,
+  StorageDeletionEntity,
 ];

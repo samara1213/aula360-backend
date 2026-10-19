@@ -63,6 +63,9 @@ export const envValidationSchema: Joi.ObjectSchema<Record<string, unknown>> =
     // Chromium de los boletines: sin sandbox solo en contenedores que corren
     // como root y no lo permiten (en lo posible, usar un usuario sin privilegios).
     PDF_CHROMIUM_NO_SANDBOX: Joi.boolean().default(false),
+    // Apaga el proceso que reintenta los borrados pendientes de Storage (por
+    // ejemplo, en una instancia que no debe tocar Supabase). En e2e no corre.
+    STORAGE_DELETIONS_DISABLED: Joi.boolean().default(false),
 
     THROTTLE_DISABLED: Joi.boolean()
       .default(false)

@@ -68,15 +68,17 @@ describe('StorageService', () => {
     });
   });
 
-  it('removeQuietly no lanza si el borrado falla', async () => {
-    bucket.remove.mockRejectedValue(new Error('red'));
+  it('remove borra la ruta y lanza el error de Supabase si falla', async () => {
+    bucket.remove.mockResolvedValueOnce({ data: [], error: null });
     await expect(
-      service.removeQuietly('avatars', 'users/u/a.png'),
+      service.remove('avatars', 'users/u/a.png'),
     ).resolves.toBeUndefined();
-    bucket.remove.mockResolvedValue({ error: { message: 'x' } });
-    await expect(
-      service.removeQuietly('avatars', 'users/u/a.png'),
-    ).resolves.toBeUndefined();
+    expect(bucket.remove).toHaveBeenCalledWith(['users/u/a.png']);
+    const failure = { message: 'x', status: 503 };
+    bucket.remove.mockResolvedValueOnce({ data: null, error: failure });
+    await expect(service.remove('avatars', 'users/u/a.png')).rejects.toBe(
+      failure,
+    );
   });
 
   describe('createSignedUrl', () => {

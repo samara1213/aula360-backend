@@ -187,6 +187,13 @@ export class TestData {
    */
   async sweepLeftovers(): Promise<void> {
     await this.ds.transaction(async (m) => {
+      // Borrados pendientes de archivos de las e2e (rutas con sus ids).
+      await m.query(
+        `DELETE FROM storage_deletions
+          WHERE split_part(path, '/', 1) IN (SELECT id::text FROM institutions WHERE nit LIKE 'E2E-%')
+             OR (split_part(path, '/', 1) = 'users'
+                 AND split_part(path, '/', 2) IN (SELECT id::text FROM users WHERE document_number LIKE 'E2E%' AND (email IS NULL OR email LIKE 'e2e-%@test.aula360.local')))`,
+      );
       for (const sql of ACADEMIC_CLEANUP(
         `SELECT id FROM institutions WHERE nit LIKE 'E2E-%'`,
       )) {
@@ -225,6 +232,13 @@ export class TestData {
 
   async cleanup(): Promise<void> {
     await this.ds.transaction(async (m) => {
+      await m.query(
+        `DELETE FROM storage_deletions
+          WHERE split_part(path, '/', 1) = ANY($1::text[])
+             OR (split_part(path, '/', 1) = 'users'
+                 AND split_part(path, '/', 2) = ANY($2::text[]))`,
+        [this.institutionIds, this.userIds],
+      );
       if (this.institutionIds.length) {
         for (const sql of ACADEMIC_CLEANUP('SELECT unnest($1::uuid[])')) {
           await m.query(sql, [this.institutionIds]);

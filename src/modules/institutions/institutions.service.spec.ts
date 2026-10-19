@@ -8,6 +8,7 @@ import { Test } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { DataSource, QueryFailedError } from 'typeorm';
 import { AuthUser } from '../../common/interfaces/auth-user.interface';
+import { StorageDeletionsService } from '../../storage/storage-deletions.service';
 import { StorageService } from '../../storage/storage.service';
 import { PerformanceLevelEntity } from '../reports/entities/performance-level.entity';
 import { ScoreEntity } from '../evaluations/entities/score.entity';
@@ -76,10 +77,14 @@ describe('InstitutionsService', () => {
   };
   const storage = {
     upload: jest.fn(),
-    removeQuietly: jest.fn(),
     publicUrl: jest.fn((_bucket: string, path: string | null) =>
       path ? `https://cdn/logos/${path}` : null,
     ),
+  };
+  const deletions = {
+    schedule: jest.fn(),
+    flush: jest.fn(),
+    discard: jest.fn(),
   };
   const permissions = { requireInstitutionWide: jest.fn() };
   const admin: AuthUser = {
@@ -99,6 +104,7 @@ describe('InstitutionsService', () => {
         { provide: getRepositoryToken(InstitutionEntity), useValue: repo },
         { provide: DataSource, useValue: dataSource },
         { provide: StorageService, useValue: storage },
+        { provide: StorageDeletionsService, useValue: deletions },
         { provide: PermissionsReader, useValue: permissions },
       ],
     }).compile();
@@ -292,7 +298,7 @@ describe('InstitutionsService', () => {
       extension: 'png',
     };
 
-    it('sube a <institutionId>/logos, guarda la ruta y borra el anterior', async () => {
+    it('sube a <institutionId>/logos, guarda la ruta y anota el borrado del anterior', async () => {
       repo.findOne.mockResolvedValue(
         institution({ logoPath: 'inst-1/logos/old.png' }),
       );
@@ -309,7 +315,12 @@ describe('InstitutionsService', () => {
       expect(repo.save).toHaveBeenCalledWith(
         expect.objectContaining({ logoPath: 'inst-1/logos/new.png' }),
       );
-      expect(storage.removeQuietly).toHaveBeenCalledWith(
+      expect(deletions.schedule).toHaveBeenCalledWith(
+        manager,
+        'logos',
+        'inst-1/logos/old.png',
+      );
+      expect(deletions.flush).toHaveBeenCalledWith(
         'logos',
         'inst-1/logos/old.png',
       );
@@ -324,14 +335,15 @@ describe('InstitutionsService', () => {
       expect(storage.upload).not.toHaveBeenCalled();
     });
 
-    it('si falla la BD borra el archivo recién subido', async () => {
+    it('si falla la BD descarta el archivo recién subido', async () => {
       repo.findOne.mockResolvedValue(institution());
       repo.save.mockRejectedValueOnce(new Error('db'));
       await expect(service.replaceLogo('inst-1', file)).rejects.toThrow('db');
-      expect(storage.removeQuietly).toHaveBeenCalledWith(
+      expect(deletions.discard).toHaveBeenCalledWith(
         'logos',
         'inst-1/logos/new.png',
       );
+      expect(deletions.flush).not.toHaveBeenCalled();
     });
 
     it('quitar el logo deja la ruta en null y borra el archivo', async () => {
@@ -341,7 +353,12 @@ describe('InstitutionsService', () => {
       const result = await service.removeLogo('inst-1');
       expect(result.logoPath).toBeNull();
       expect(result.logoUrl).toBeNull();
-      expect(storage.removeQuietly).toHaveBeenCalledWith(
+      expect(deletions.schedule).toHaveBeenCalledWith(
+        manager,
+        'logos',
+        'inst-1/logos/old.png',
+      );
+      expect(deletions.flush).toHaveBeenCalledWith(
         'logos',
         'inst-1/logos/old.png',
       );

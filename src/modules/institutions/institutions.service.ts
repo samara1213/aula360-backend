@@ -22,6 +22,7 @@ import { AuthUser } from '../../common/interfaces/auth-user.interface';
 import { activeInstitutionId } from '../../common/utils/active-institution';
 import { rejectNullFields } from '../../common/validators/reject-null-fields';
 import { ValidatedFile } from '../../storage/image-file.pipe';
+import { StorageDeletionsService } from '../../storage/storage-deletions.service';
 import { StorageService } from '../../storage/storage.service';
 import { ScoreEntity } from '../evaluations/entities/score.entity';
 import {
@@ -63,6 +64,7 @@ export class InstitutionsService {
     private readonly institutions: Repository<InstitutionEntity>,
     private readonly dataSource: DataSource,
     private readonly storage: StorageService,
+    private readonly deletions: StorageDeletionsService,
     private readonly permissions: PermissionsReader,
   ) {}
 
@@ -207,8 +209,9 @@ export class InstitutionsService {
   }
 
   /**
-   * Sube el logo nuevo, guarda su ruta con la fila bloqueada y después borra el
-   * anterior. Si falla la BD, se borra el recién subido (no quedan huérfanos).
+   * Sube el logo nuevo, guarda su ruta con la fila bloqueada y anota el
+   * borrado del anterior en la misma transacción. Si falla la BD, se descarta
+   * el recién subido (no quedan huérfanos aunque Storage falle).
    */
   async replaceLogo(
     id: string,
@@ -219,7 +222,7 @@ export class InstitutionsService {
     try {
       return await this.setLogoPath(id, path);
     } catch (error) {
-      await this.storage.removeQuietly(LOGO_BUCKET, path);
+      await this.deletions.discard(LOGO_BUCKET, path);
       throw error;
     }
   }
@@ -243,11 +246,13 @@ export class InstitutionsService {
         const old = entity.logoPath;
         if (old === path) return { saved: entity, previous: old };
         entity.logoPath = path;
-        return { saved: await repo.save(entity), previous: old };
+        const saved = await repo.save(entity);
+        if (old) await this.deletions.schedule(manager, LOGO_BUCKET, old);
+        return { saved, previous: old };
       },
     );
     if (previous && previous !== path) {
-      await this.storage.removeQuietly(LOGO_BUCKET, previous);
+      await this.deletions.flush(LOGO_BUCKET, previous);
     }
     return this.toDto(saved);
   }

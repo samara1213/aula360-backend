@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
 import { ValidatedFile } from '../../storage/image-file.pipe';
 import { SIGNED_URL_TTL_SECONDS } from '../../storage/storage.constants';
+import { StorageDeletionsService } from '../../storage/storage-deletions.service';
 import { StorageService } from '../../storage/storage.service';
 import { AvatarResponseDto } from './dto/avatar-response.dto';
 import { UserEntity } from './entities/user.entity';
@@ -24,6 +25,7 @@ export class UsersService {
     private readonly users: Repository<UserEntity>,
     private readonly dataSource: DataSource,
     private readonly storage: StorageService,
+    private readonly deletions: StorageDeletionsService,
   ) {}
 
   async getAvatar(userId: string): Promise<AvatarResponseDto> {
@@ -38,8 +40,9 @@ export class UsersService {
   }
 
   /**
-   * Sube el avatar nuevo, guarda su ruta con la fila bloqueada y después borra
-   * el anterior. Si falla la BD, se borra el recién subido.
+   * Sube el avatar nuevo, guarda su ruta con la fila bloqueada y anota el
+   * borrado del anterior en la misma transacción. Si falla la BD, se descarta
+   * el recién subido.
    */
   async replaceAvatar(
     userId: string,
@@ -53,7 +56,7 @@ export class UsersService {
     try {
       await this.setAvatarPath(userId, path);
     } catch (error) {
-      await this.storage.removeQuietly(AVATAR_BUCKET, path);
+      await this.deletions.discard(AVATAR_BUCKET, path);
       throw error;
     }
     return this.toAvatar(path);
@@ -77,11 +80,18 @@ export class UsersService {
       if (!user) throw new NotFoundException('Usuario no encontrado');
       if (user.avatarPath !== path) {
         await repo.update({ id: userId }, { avatarPath: path });
+        if (user.avatarPath) {
+          await this.deletions.schedule(
+            manager,
+            AVATAR_BUCKET,
+            user.avatarPath,
+          );
+        }
       }
       return user.avatarPath;
     });
     if (previous && previous !== path) {
-      await this.storage.removeQuietly(AVATAR_BUCKET, previous);
+      await this.deletions.flush(AVATAR_BUCKET, previous);
     }
   }
 

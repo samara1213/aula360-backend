@@ -11,6 +11,7 @@ import { PdfRendererService } from '../src/modules/reports/pdf-renderer.service'
 import { StudentEntity } from '../src/modules/users/entities/student.entity';
 import { TeacherEntity } from '../src/modules/users/entities/teacher.entity';
 import { createTestApp, TestContext } from './utils/create-test-app';
+import { pendingDeletion, retryDeletion } from './utils/storage-deletions';
 import { TEST_PASSWORD } from './utils/test-data';
 
 type Agent = ReturnType<typeof request.agent>;
@@ -435,7 +436,7 @@ describe('Boletines (e2e)', () => {
       expect((await list(adminA, '?outdated=true')).meta.total).toBe(0);
     });
 
-    it('si una nota cambia mientras se imprime: 409 y no queda el PDF nuevo', async () => {
+    it('si una nota cambia mientras se imprime: 409 y el PDF nuevo se borra más tarde', async () => {
       const renderer = ctx.app.get(PdfRendererService);
       const original = renderer.render.bind(renderer);
       const spy = jest
@@ -446,17 +447,56 @@ describe('Boletines (e2e)', () => {
           await scores(physics, [{ studentId: s1, score: 4 }]);
           return pdf;
         });
-      const before = ctx.storage.objects.size;
+      const before = new Set(ctx.storage.objects.keys());
       try {
         const body = await generate(adminA, s1, 409);
         expect(body.message).toMatch(/cambiaron/);
       } finally {
         spy.mockRestore();
       }
-      expect(ctx.storage.objects.size).toBe(before);
+      // Se anota para dentro de 10 minutos, sin borrarlo en el acto: si el
+      // COMMIT siguiera en curso, entonces ya se vería (M2 de la fase 11a).
+      const added = [...ctx.storage.objects.keys()].filter(
+        (k) => !before.has(k),
+      );
+      expect(added).toHaveLength(1);
+      const orphan = added[0].slice('report-cards/'.length);
+      const pending = await pendingDeletion(ctx, 'report-cards', orphan);
+      expect(pending).toMatchObject({ attempts: 0 });
+      expect(pending!.wait).toBeGreaterThan(580);
+      await retryDeletion(ctx, 'report-cards', orphan);
+      expect(ctx.storage.has('report-cards', orphan)).toBe(false);
+      expect(await pendingDeletion(ctx, 'report-cards', orphan)).toBeNull();
       // El boletín anterior queda, pero desactualizado.
       expect((await cardOf(s1)).outdated).toBe(true);
       await generate(adminA, s1, 201);
+    });
+
+    it('con Storage caído: el PDF anterior queda anotado y el reintento lo borra (2.11.5)', async () => {
+      const pdfOf = async (studentId: string) =>
+        (
+          await ctx.dataSource.query<{ pdf_path: string }[]>(
+            `SELECT pdf_path FROM report_cards WHERE student_id = $1 AND period_id = $2`,
+            [studentId, period],
+          )
+        )[0].pdf_path;
+      const previous = await pdfOf(s1);
+      ctx.storage.failRemovals = true;
+      try {
+        await generate(adminA, s1, 201);
+      } finally {
+        ctx.storage.failRemovals = false;
+      }
+      const current = await pdfOf(s1);
+      expect(current).not.toBe(previous);
+      expect(ctx.storage.has('report-cards', previous)).toBe(true);
+      expect(
+        await pendingDeletion(ctx, 'report-cards', previous),
+      ).toMatchObject({ attempts: 1 });
+      await retryDeletion(ctx, 'report-cards', previous);
+      expect(ctx.storage.has('report-cards', previous)).toBe(false);
+      expect(await pendingDeletion(ctx, 'report-cards', previous)).toBeNull();
+      expect(ctx.storage.has('report-cards', current)).toBe(true);
     });
   });
 

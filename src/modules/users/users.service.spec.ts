@@ -2,6 +2,7 @@ import { NotFoundException } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
+import { StorageDeletionsService } from '../../storage/storage-deletions.service';
 import { StorageService } from '../../storage/storage.service';
 import { UserEntity } from './entities/user.entity';
 import { UsersService } from './users.service';
@@ -15,8 +16,12 @@ describe('UsersService (avatar)', () => {
   };
   const storage = {
     upload: jest.fn(),
-    removeQuietly: jest.fn(),
     createSignedUrl: jest.fn(),
+  };
+  const deletions = {
+    schedule: jest.fn(),
+    flush: jest.fn(),
+    discard: jest.fn(),
   };
   const file = {
     buffer: Buffer.from('x'),
@@ -34,12 +39,13 @@ describe('UsersService (avatar)', () => {
         { provide: getRepositoryToken(UserEntity), useValue: repo },
         { provide: DataSource, useValue: dataSource },
         { provide: StorageService, useValue: storage },
+        { provide: StorageDeletionsService, useValue: deletions },
       ],
     }).compile();
     service = moduleRef.get(UsersService);
   });
 
-  it('sube a users/<userId>, guarda la ruta con la fila bloqueada y borra el anterior', async () => {
+  it('sube a users/<userId>, guarda la ruta con la fila bloqueada y anota el borrado del anterior', async () => {
     repo.findOne.mockResolvedValue({
       id: 'u-1',
       avatarPath: 'users/u-1/old.png',
@@ -56,7 +62,13 @@ describe('UsersService (avatar)', () => {
       { id: 'u-1' },
       { avatarPath: 'users/u-1/new.webp' },
     );
-    expect(storage.removeQuietly).toHaveBeenCalledWith(
+    // En la misma transacción, y se intenta después del commit.
+    expect(deletions.schedule).toHaveBeenCalledWith(
+      manager,
+      'avatars',
+      'users/u-1/old.png',
+    );
+    expect(deletions.flush).toHaveBeenCalledWith(
       'avatars',
       'users/u-1/old.png',
     );
@@ -67,15 +79,16 @@ describe('UsersService (avatar)', () => {
     });
   });
 
-  it('si falla la BD borra el archivo recién subido', async () => {
+  it('si falla la BD descarta el archivo recién subido', async () => {
     repo.findOne.mockResolvedValue(null);
     await expect(service.replaceAvatar('u-1', file)).rejects.toBeInstanceOf(
       NotFoundException,
     );
-    expect(storage.removeQuietly).toHaveBeenCalledWith(
+    expect(deletions.discard).toHaveBeenCalledWith(
       'avatars',
       'users/u-1/new.webp',
     );
+    expect(deletions.schedule).not.toHaveBeenCalled();
     expect(repo.update).not.toHaveBeenCalled();
   });
 
@@ -89,7 +102,12 @@ describe('UsersService (avatar)', () => {
       { id: 'u-1' },
       { avatarPath: null },
     );
-    expect(storage.removeQuietly).toHaveBeenCalledWith(
+    expect(deletions.schedule).toHaveBeenCalledWith(
+      manager,
+      'avatars',
+      'users/u-1/old.png',
+    );
+    expect(deletions.flush).toHaveBeenCalledWith(
       'avatars',
       'users/u-1/old.png',
     );
@@ -99,7 +117,8 @@ describe('UsersService (avatar)', () => {
     repo.findOne.mockResolvedValue({ id: 'u-1', avatarPath: null });
     await service.removeAvatar('u-1');
     expect(repo.update).not.toHaveBeenCalled();
-    expect(storage.removeQuietly).not.toHaveBeenCalled();
+    expect(deletions.schedule).not.toHaveBeenCalled();
+    expect(deletions.flush).not.toHaveBeenCalled();
   });
 
   it('getAvatar firma la ruta guardada y 404 si no tiene', async () => {

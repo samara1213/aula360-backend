@@ -80,16 +80,14 @@ export class StorageService {
     return path;
   }
 
-  /** Borra el archivo; si falla solo se registra (no debe tumbar la operación). */
-  async removeQuietly(bucket: BucketName, path: string): Promise<void> {
-    try {
-      const { error } = await this.client.storage.from(bucket).remove([path]);
-      if (error) throw error;
-    } catch (error) {
-      this.logger.warn(
-        `No se pudo borrar ${bucket}/${path}: ${(error as Error).message}`,
-      );
-    }
+  /**
+   * Borra el archivo; lanza el error de Supabase si falla. Un archivo que ya
+   * no existe cuenta como borrado. Solo lo usa StorageDeletionsService: los
+   * demás anotan el borrado para que no se pierda si Supabase falla.
+   */
+  async remove(bucket: BucketName, path: string): Promise<void> {
+    const { error } = await this.client.storage.from(bucket).remove([path]);
+    if (error) throw error;
   }
 
   /** Contenido de un archivo (plantillas de boletín, logo para el PDF). */

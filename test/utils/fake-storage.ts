@@ -12,9 +12,11 @@ import {
  */
 export class FakeStorageService implements Pick<
   StorageService,
-  'upload' | 'removeQuietly' | 'createSignedUrl' | 'publicUrl' | 'download'
+  'upload' | 'remove' | 'createSignedUrl' | 'publicUrl' | 'download'
 > {
   readonly objects = new Map<string, ValidatedFile>();
+  /** true = los borrados fallan como si Supabase no respondiera. */
+  failRemovals = false;
 
   has(bucket: BucketName, path: string | null): boolean {
     return path !== null && this.objects.has(`${bucket}/${path}`);
@@ -38,7 +40,12 @@ export class FakeStorageService implements Pick<
     return Promise.resolve(file.buffer);
   }
 
-  removeQuietly(bucket: BucketName, path: string): Promise<void> {
+  remove(bucket: BucketName, path: string): Promise<void> {
+    if (this.failRemovals) {
+      return Promise.reject(
+        Object.assign(new Error('Storage no disponible'), { status: 503 }),
+      );
+    }
     this.objects.delete(`${bucket}/${path}`);
     return Promise.resolve();
   }

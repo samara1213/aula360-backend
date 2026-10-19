@@ -9,6 +9,7 @@ import { createHash } from 'crypto';
 import { DataSource, EntityManager, Not } from 'typeorm';
 import { AuthUser } from '../../common/interfaces/auth-user.interface';
 import { sharp } from '../../storage/sharp';
+import { StorageDeletionsService } from '../../storage/storage-deletions.service';
 import { StorageService } from '../../storage/storage.service';
 import { mapIntegrityError } from '../academic/academic.shared';
 import { InstitutionEntity } from '../institutions/entities/institution.entity';
@@ -57,6 +58,7 @@ export class ReportTemplatesService {
   constructor(
     private readonly dataSource: DataSource,
     private readonly storage: StorageService,
+    private readonly deletions: StorageDeletionsService,
     private readonly renderer: PdfRendererService,
   ) {}
 
@@ -110,7 +112,7 @@ export class ReportTemplatesService {
         }),
       );
     } catch (error) {
-      await this.storage.removeQuietly(TEMPLATES_BUCKET, storagePath);
+      await this.deletions.discard(TEMPLATES_BUCKET, storagePath);
       // Dos subidas iguales a la vez: la segunda choca con el UNIQUE (B4).
       throw mapIntegrityError(error, {
         duplicate:
@@ -175,7 +177,10 @@ export class ReportTemplatesService {
     return ReportTemplateResponseDto.from(row);
   }
 
-  /** Solo si ningún boletín la usó (409); el archivo se borra después. */
+  /**
+   * Solo si ningún boletín la usó (409); el borrado del archivo se anota en
+   * la misma transacción y se intenta después del commit.
+   */
   async remove(
     user: AuthUser,
     institutionId: string,
@@ -195,10 +200,15 @@ export class ReportTemplatesService {
             'La plantilla ya se usó en boletines: desactívela en lugar de borrarla',
         });
       }
+      await this.deletions.schedule(
+        manager,
+        TEMPLATES_BUCKET,
+        template.storagePath,
+      );
       return template;
     });
     this.cache.delete(`${row.id}:${row.contentSha256}`);
-    await this.storage.removeQuietly(TEMPLATES_BUCKET, row.storagePath);
+    await this.deletions.flush(TEMPLATES_BUCKET, row.storagePath);
     this.audit(user, 'report-template.deleted', row);
   }
 

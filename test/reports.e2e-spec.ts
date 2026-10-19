@@ -4,6 +4,7 @@ import { CampusEntity } from '../src/modules/institutions/entities/campus.entity
 import { InstitutionEntity } from '../src/modules/institutions/entities/institution.entity';
 import { PerformanceLevelEntity } from '../src/modules/reports/entities/performance-level.entity';
 import { createTestApp, TestContext } from './utils/create-test-app';
+import { pendingDeletion, retryDeletion } from './utils/storage-deletions';
 import { TEST_PASSWORD } from './utils/test-data';
 
 type Agent = ReturnType<typeof request.agent>;
@@ -379,6 +380,33 @@ describe('Niveles de desempeño y plantillas de boletín (e2e)', () => {
       await superAdmin
         .delete(`${templatesUrl(institutionA.id)}/${temp.id}`)
         .expect(404);
+    });
+
+    it('con Storage caído el borrado queda anotado y el reintento lo completa (2.11.5)', async () => {
+      const temp = (
+        await upload(superAdmin, institutionA.id, TEMPLATE('Caída')).expect(201)
+      ).body as Template;
+      const [path] = await ctx.dataSource
+        .query<{ storage_path: string }[]>(
+          `SELECT storage_path FROM report_card_templates WHERE id = $1`,
+          [temp.id],
+        )
+        .then((rows) => rows.map((r) => r.storage_path));
+      ctx.storage.failRemovals = true;
+      try {
+        await superAdmin
+          .delete(`${templatesUrl(institutionA.id)}/${temp.id}`)
+          .expect(204);
+      } finally {
+        ctx.storage.failRemovals = false;
+      }
+      expect(ctx.storage.has('report-templates', path)).toBe(true);
+      expect(
+        await pendingDeletion(ctx, 'report-templates', path),
+      ).toMatchObject({ attempts: 1 });
+      await retryDeletion(ctx, 'report-templates', path);
+      expect(ctx.storage.has('report-templates', path)).toBe(false);
+      expect(await pendingDeletion(ctx, 'report-templates', path)).toBeNull();
     });
   });
 });

@@ -7,6 +7,7 @@ import { InstitutionEntity } from '../src/modules/institutions/entities/institut
 import { UserEntity } from '../src/modules/users/entities/user.entity';
 import { sharp } from '../src/storage/sharp';
 import { createTestApp, TestContext } from './utils/create-test-app';
+import { pendingDeletion, retryDeletion } from './utils/storage-deletions';
 import { TEST_PASSWORD } from './utils/test-data';
 
 type Agent = ReturnType<typeof request.agent>;
@@ -384,6 +385,99 @@ describe('Storage: avatar y logo (e2e)', () => {
         .attach('file', ...png())
         .expect(404);
       expect(ctx.storage.objects.size).toBe(before);
+    });
+  });
+
+  describe('borrados pendientes (tarea 2.11.5)', () => {
+    afterEach(() => {
+      ctx.storage.failRemovals = false;
+    });
+
+    it('el caso normal borra enseguida y no deja anotaciones', async () => {
+      const first = await adminB
+        .put('/api/users/me/avatar')
+        .attach('file', ...png())
+        .expect(200);
+      const firstPath = first.body.avatarPath as string;
+      await adminB
+        .put('/api/users/me/avatar')
+        .attach('file', ...png())
+        .expect(200);
+      expect(ctx.storage.has('avatars', firstPath)).toBe(false);
+      expect(await pendingDeletion(ctx, 'avatars', firstPath)).toBeNull();
+    });
+
+    it('avatar con Storage caído: queda anotado y el reintento lo borra', async () => {
+      const first = await adminB
+        .put('/api/users/me/avatar')
+        .attach('file', ...png())
+        .expect(200);
+      const firstPath = first.body.avatarPath as string;
+      ctx.storage.failRemovals = true;
+      // La operación no falla por el borrado.
+      const second = await adminB
+        .put('/api/users/me/avatar')
+        .attach('file', ...png())
+        .expect(200);
+      expect(ctx.storage.has('avatars', firstPath)).toBe(true);
+      const pending = await pendingDeletion(ctx, 'avatars', firstPath);
+      // Primer intento hecho; el siguiente, en unos 5 minutos.
+      expect(pending).toMatchObject({ attempts: 1, last_error: 'http_503' });
+      expect(pending!.wait).toBeGreaterThan(280);
+      expect(pending!.wait).toBeLessThanOrEqual(300);
+
+      // Sigue caído: la espera se duplica.
+      await retryDeletion(ctx, 'avatars', firstPath);
+      const again = await pendingDeletion(ctx, 'avatars', firstPath);
+      expect(again).toMatchObject({ attempts: 2 });
+      expect(again!.wait).toBeGreaterThan(580);
+
+      ctx.storage.failRemovals = false;
+      await retryDeletion(ctx, 'avatars', firstPath);
+      expect(ctx.storage.has('avatars', firstPath)).toBe(false);
+      expect(await pendingDeletion(ctx, 'avatars', firstPath)).toBeNull();
+      // El avatar vigente no se tocó.
+      expect(ctx.storage.has('avatars', second.body.avatarPath as string)).toBe(
+        true,
+      );
+    });
+
+    it('logo quitado con Storage caído: queda anotado y el reintento lo borra', async () => {
+      const res = await superAdmin
+        .put(`/api/institutions/${institutionB.id}/logo`)
+        .attach('file', ...png())
+        .expect(200);
+      const path = res.body.logoPath as string;
+      ctx.storage.failRemovals = true;
+      await superAdmin
+        .delete(`/api/institutions/${institutionB.id}/logo`)
+        .expect(200);
+      expect(ctx.storage.has('logos', path)).toBe(true);
+      expect(await pendingDeletion(ctx, 'logos', path)).toMatchObject({
+        attempts: 1,
+      });
+
+      ctx.storage.failRemovals = false;
+      await retryDeletion(ctx, 'logos', path);
+      expect(ctx.storage.has('logos', path)).toBe(false);
+      expect(await pendingDeletion(ctx, 'logos', path)).toBeNull();
+    });
+
+    it('nunca borra un archivo que una fila todavía usa', async () => {
+      const res = await adminB
+        .put('/api/users/me/avatar')
+        .attach('file', ...png())
+        .expect(200);
+      const path = res.body.avatarPath as string;
+      // Anotación indebida (p. ej. un COMMIT confirmado con la respuesta perdida).
+      await ctx.dataSource.query(
+        `INSERT INTO storage_deletions (bucket, path) VALUES ('avatars', $1)`,
+        [path],
+      );
+      await retryDeletion(ctx, 'avatars', path);
+      expect(ctx.storage.has('avatars', path)).toBe(true);
+      expect(await pendingDeletion(ctx, 'avatars', path)).toBeNull();
+      await adminB.get('/api/users/me/avatar').expect(200);
     });
   });
 });

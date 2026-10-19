@@ -23,7 +23,6 @@ import { UserEntity } from '../../users/entities/user.entity';
   'institutionId',
   'contentSha256',
 ])
-@Index('idx_report_card_templates_institution', ['institutionId'])
 @Index('uq_report_card_templates_active', ['institutionId'], {
   unique: true,
   where: 'is_active',
