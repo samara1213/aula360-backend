@@ -17,6 +17,17 @@ const perUserTracker = (req: Record<string, unknown>): string => {
 };
 
 /**
+ * Rutas con sesión que comprueban la contraseña actual (cambiar contraseña o
+ * email): 5 por minuto por usuario. Con una sesión robada no se prueba la
+ * contraseña desde muchas IP, y un colegio detrás de una sola IP no comparte
+ * el límite (B2 de la fase 11b).
+ * Uso: @Throttle(CURRENT_PASSWORD_THROTTLE)
+ */
+export const CURRENT_PASSWORD_THROTTLE = {
+  default: { ttl: 60_000, limit: 5, getTracker: perUserTracker },
+};
+
+/**
  * Límite para subir o quitar archivos: 10 por minuto por usuario.
  * Uso: @Throttle(UPLOAD_THROTTLE)
  */

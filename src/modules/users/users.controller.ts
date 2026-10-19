@@ -1,4 +1,5 @@
 import {
+  Body,
   Controller,
   Delete,
   Get,
@@ -8,6 +9,8 @@ import {
   UploadedFile,
 } from '@nestjs/common';
 import {
+  ApiBadRequestResponse,
+  ApiConflictResponse,
   ApiCookieAuth,
   ApiNoContentResponse,
   ApiNotFoundResponse,
@@ -16,11 +19,16 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
-import { UPLOAD_THROTTLE } from '../../common/constants/throttle';
+import {
+  CURRENT_PASSWORD_THROTTLE,
+  UPLOAD_THROTTLE,
+} from '../../common/constants/throttle';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import type { AuthUser } from '../../common/interfaces/auth-user.interface';
 import { ImageFilePipe, ValidatedFile } from '../../storage/image-file.pipe';
 import { ImageUpload } from '../../storage/image-upload.decorator';
+import { ChangeOwnEmailDto } from '../auth/dto/verify-email.dto';
+import { EmailVerificationService } from '../auth/email-verification.service';
 import { AvatarResponseDto } from './dto/avatar-response.dto';
 import { UsersService } from './users.service';
 
@@ -29,7 +37,33 @@ import { UsersService } from './users.service';
 @ApiCookieAuth('access_token')
 @Controller('users')
 export class UsersController {
-  constructor(private readonly users: UsersService) {}
+  constructor(
+    private readonly users: UsersService,
+    private readonly emailVerification: EmailVerificationService,
+  ) {}
+
+  // Límite estricto: evita adivinar la contraseña actual con una sesión robada.
+  @Put('me/email')
+  @Throttle(CURRENT_PASSWORD_THROTTLE)
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({
+    summary: 'Cambiar el email propio',
+    description:
+      'Queda pendiente hasta confirmarlo con el enlace enviado al correo nuevo; al anterior se le avisa.',
+  })
+  @ApiNoContentResponse()
+  @ApiBadRequestResponse({ description: 'Contraseña actual incorrecta' })
+  @ApiConflictResponse({ description: 'El email ya lo usa otro usuario' })
+  async changeEmail(
+    @CurrentUser() user: AuthUser,
+    @Body() dto: ChangeOwnEmailDto,
+  ): Promise<void> {
+    await this.emailVerification.requestOwnChange(
+      user.userId,
+      dto.email,
+      dto.currentPassword,
+    );
+  }
 
   @Get('me/avatar')
   @ApiOperation({

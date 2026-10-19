@@ -10,6 +10,7 @@ import {
 } from '@nestjs/common';
 import {
   ApiBadRequestResponse,
+  ApiConflictResponse,
   ApiCookieAuth,
   ApiForbiddenResponse,
   ApiNoContentResponse,
@@ -22,7 +23,11 @@ import {
 } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import { Request, Response } from 'express';
-import { STRICT_AUTH_THROTTLE } from '../../common/constants/throttle';
+import {
+  CURRENT_PASSWORD_THROTTLE,
+  SENSITIVE_ACTION_THROTTLE,
+  STRICT_AUTH_THROTTLE,
+} from '../../common/constants/throttle';
 import { AllowPendingPasswordChange } from '../../common/decorators/allow-pending-password-change.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { Public } from '../../common/decorators/public.decorator';
@@ -36,6 +41,7 @@ import {
   setAuthCookies,
 } from './auth-cookies';
 import { AuthService } from './auth.service';
+import { EmailVerificationService } from './email-verification.service';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { LoginDto } from './dto/login.dto';
@@ -45,6 +51,7 @@ import {
   SessionResponseDto,
 } from './dto/session-response.dto';
 import { SwitchInstitutionDto } from './dto/switch-institution.dto';
+import { VerifyEmailDto } from './dto/verify-email.dto';
 import { TokenService } from './token.service';
 
 const FORGOT_PASSWORD_MESSAGE =
@@ -56,6 +63,7 @@ export class AuthController {
   constructor(
     private readonly auth: AuthService,
     private readonly tokens: TokenService,
+    private readonly emailVerification: EmailVerificationService,
   ) {}
 
   private get cookieSettings() {
@@ -165,8 +173,8 @@ export class AuthController {
     clearAuthCookies(res, this.tokens.secureCookies);
   }
 
-  // Límite estricto: evita adivinar la contraseña actual con una sesión robada.
-  @Throttle(STRICT_AUTH_THROTTLE)
+  // Por usuario: evita adivinar la contraseña actual con una sesión robada.
+  @Throttle(CURRENT_PASSWORD_THROTTLE)
   @Post('change-password')
   @AllowPendingPasswordChange()
   @HttpCode(HttpStatus.NO_CONTENT)
@@ -214,5 +222,36 @@ export class AuthController {
   @ApiBadRequestResponse({ description: 'Token inválido, vencido o ya usado' })
   async resetPassword(@Body() dto: ResetPasswordDto): Promise<void> {
     await this.auth.resetPassword(dto);
+  }
+
+  // Sin sesión: el enlace puede abrirse en otro dispositivo.
+  @Public()
+  @Throttle(STRICT_AUTH_THROTTLE)
+  @Post('verify-email')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({
+    summary: 'Confirmar el email con el token recibido por correo',
+    description:
+      'Si el token es de un cambio pendiente, el email nuevo pasa a ser el de la cuenta.',
+  })
+  @ApiNoContentResponse()
+  @ApiBadRequestResponse({ description: 'Enlace inválido, vencido o ya usado' })
+  @ApiConflictResponse({ description: 'El email ya lo usa otro usuario' })
+  async verifyEmail(@Body() dto: VerifyEmailDto): Promise<void> {
+    await this.emailVerification.confirm(dto.token);
+  }
+
+  @Throttle(SENSITIVE_ACTION_THROTTLE)
+  @Post('verify-email/resend')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiCookieAuth()
+  @ApiOperation({
+    summary: 'Reenviar el enlace de verificación (respuesta siempre igual)',
+    description:
+      'Del cambio pendiente o, si no hay, del email actual sin verificar. Uno cada 2 minutos.',
+  })
+  @ApiNoContentResponse()
+  async resendVerification(@CurrentUser() user: AuthUser): Promise<void> {
+    await this.emailVerification.resend(user.userId);
   }
 }

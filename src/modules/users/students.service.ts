@@ -234,7 +234,7 @@ export class StudentsService {
     id: string,
     dto: UpdateStudentDto,
   ): Promise<StudentResponseDto> {
-    await this.dataSource.transaction(async (manager) => {
+    const notice = await this.dataSource.transaction(async (manager) => {
       const campusScope = await this.campusScope(scope, 'update');
       const found = await this.findVisible(manager, scope, campusScope, id);
       const user = await lockUser(manager, found.userId);
@@ -244,7 +244,7 @@ export class StudentsService {
         lock: true,
       });
       // Reglas de gestión siempre (aunque solo cambie el perfil).
-      await this.users.applyPersonalChanges(
+      const change = await this.users.applyPersonalChanges(
         manager,
         scope,
         user,
@@ -260,7 +260,9 @@ export class StudentsService {
       if (Object.keys(changes).length) {
         await this.saveStudentChanges(manager, student.id, changes);
       }
+      return change;
     });
+    this.users.notifyEmailChange(notice);
     return this.findOne(scope, id);
   }
 

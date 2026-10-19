@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { AuthModule } from '../auth/auth.module';
 import { MailModule } from '../mail/mail.module';
 import { SecurityModule } from '../security/security.module';
 import { UserEntity } from './entities/user.entity';
@@ -15,7 +16,12 @@ import { UsersController } from './users.controller';
 import { UsersService } from './users.service';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([UserEntity]), SecurityModule, MailModule],
+  imports: [
+    TypeOrmModule.forFeature([UserEntity]),
+    SecurityModule,
+    MailModule,
+    AuthModule,
+  ],
   // UsersController (rutas /users/me/...) va primero: sus rutas fijas deben
   // registrarse antes que las de /users/:id.
   controllers: [

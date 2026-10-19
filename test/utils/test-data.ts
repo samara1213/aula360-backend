@@ -58,6 +58,8 @@ export interface CreateUserOptions {
   isActive?: boolean;
   mustChangePassword?: boolean;
   withEmail?: boolean;
+  /** Por defecto el email queda verificado (como si lo hubiera confirmado). */
+  emailVerified?: boolean;
 }
 
 /**
@@ -90,6 +92,10 @@ export class TestData {
       lastName: `E2E ${suffix}`,
       email:
         options.withEmail === false ? null : `e2e-${suffix}@test.aula360.local`,
+      emailVerifiedAt:
+        options.withEmail === false || options.emailVerified === false
+          ? null
+          : new Date(),
       passwordHash: await testPasswordHash(),
       isActive: options.isActive ?? true,
       mustChangePassword: options.mustChangePassword ?? false,

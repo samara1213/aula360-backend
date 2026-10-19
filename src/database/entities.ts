@@ -4,6 +4,7 @@ import { GradeEntity } from '../modules/academic/entities/grade.entity';
 import { PeriodEntity } from '../modules/academic/entities/period.entity';
 import { SubjectEntity } from '../modules/academic/entities/subject.entity';
 import { TeacherSubjectCourseEntity } from '../modules/academic/entities/teacher-subject-course.entity';
+import { EmailVerificationTokenEntity } from '../modules/auth/entities/email-verification-token.entity';
 import { PasswordResetTokenEntity } from '../modules/auth/entities/password-reset-token.entity';
 import { RefreshTokenEntity } from '../modules/auth/entities/refresh-token.entity';
 import { EnrollmentEntity } from '../modules/enrollments/entities/enrollment.entity';
@@ -49,4 +50,5 @@ export const ALL_ENTITIES = [
   PerformanceLevelEntity,
   ReportCardTemplateEntity,
   StorageDeletionEntity,
+  EmailVerificationTokenEntity,
 ];

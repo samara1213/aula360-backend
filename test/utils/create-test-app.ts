@@ -4,7 +4,9 @@ import { App } from 'supertest/types';
 import { DataSource } from 'typeorm';
 import { AppModule } from '../../src/app.module';
 import { configureApp } from '../../src/app.setup';
+import { MailService } from '../../src/modules/mail/mail.service';
 import { StorageService } from '../../src/storage/storage.service';
+import { FakeMailService } from './fake-mail';
 import { FakeStorageService } from './fake-storage';
 import { TestData } from './test-data';
 
@@ -13,19 +15,24 @@ export interface TestContext {
   data: TestData;
   dataSource: DataSource;
   storage: FakeStorageService;
+  mail: FakeMailService;
 }
 
 /**
  * App igual a la de producción (configureApp) y fábrica de datos con limpieza
- * acotada. Storage es en memoria: las e2e no suben archivos a Supabase.
+ * acotada. Storage y correo son en memoria: las e2e no suben archivos a
+ * Supabase ni envían correos (ctx.mail guarda los mensajes).
  */
 export async function createTestApp(): Promise<TestContext> {
   const storage = new FakeStorageService();
+  const mail = new FakeMailService();
   const moduleRef = await Test.createTestingModule({
     imports: [AppModule],
   })
     .overrideProvider(StorageService)
     .useValue(storage)
+    .overrideProvider(MailService)
+    .useValue(mail)
     .compile();
   const app = moduleRef.createNestApplication<INestApplication<App>>();
   configureApp(app);
@@ -33,7 +40,7 @@ export async function createTestApp(): Promise<TestContext> {
   const dataSource = app.get(DataSource);
   const data = new TestData(dataSource);
   await data.sweepLeftovers();
-  return { app, dataSource, data, storage };
+  return { app, dataSource, data, storage, mail };
 }
 
 /** Extrae las cookies Set-Cookie de una respuesta. */

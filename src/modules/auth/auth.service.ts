@@ -15,6 +15,7 @@ import {
   EntityManager,
   IsNull,
   MoreThan,
+  Not,
   Repository,
 } from 'typeorm';
 import { AuthUser } from '../../common/interfaces/auth-user.interface';
@@ -32,6 +33,7 @@ import {
 import { PasswordResetTokenEntity } from './entities/password-reset-token.entity';
 import { RefreshTokenEntity } from './entities/refresh-token.entity';
 import { TokenService } from './token.service';
+import { EmailVerificationService } from './email-verification.service';
 import { escapeHtml } from '../../common/utils/escape-html';
 import { ACTIVE_ASSIGNMENT_CONDITION } from '../security/active-assignment';
 
@@ -60,6 +62,7 @@ export class AuthService implements OnModuleInit {
     private readonly tokens: TokenService,
     private readonly mail: MailService,
     private readonly config: ConfigService,
+    private readonly emailVerification: EmailVerificationService,
     @InjectRepository(UserEntity)
     private readonly users: Repository<UserEntity>,
     @InjectRepository(UserInstitutionRoleEntity)
@@ -115,7 +118,7 @@ export class AuthService implements OnModuleInit {
 
     return {
       tokens,
-      session: this.toSession(user, activeInstitutionId, institutions),
+      session: await this.toSession(user, activeInstitutionId, institutions),
     };
   }
 
@@ -151,7 +154,7 @@ export class AuthService implements OnModuleInit {
     const entity = await this.users.findOne({ where: { id: user.userId } });
     if (!entity) throw new UnauthorizedException();
     const institutions = await this.getMemberships(user.userId);
-    return this.toSession(entity, user.institutionId, institutions);
+    return await this.toSession(entity, user.institutionId, institutions);
   }
 
   /** Reemite el access token (misma sesión) con otra institución tras verificar el vínculo. */
@@ -173,7 +176,7 @@ export class AuthService implements OnModuleInit {
     });
     return {
       accessToken,
-      session: this.toSession(entity, institutionId, institutions),
+      session: await this.toSession(entity, institutionId, institutions),
     };
   }
 
@@ -316,7 +319,8 @@ export class AuthService implements OnModuleInit {
   /**
    * Responde de inmediato y siempre igual: todo el trabajo que depende de si el
    * email existe corre en segundo plano, para que ni el mensaje ni el tiempo de
-   * respuesta lo delaten.
+   * respuesta lo delaten. Solo a correos verificados (tarea 2.11.6): si no, un
+   * administrador podría poner un correo suyo y tomar la cuenta.
    */
   forgotPassword(email: string): void {
     this.processForgotPassword(email).catch((error: Error) =>
@@ -327,7 +331,9 @@ export class AuthService implements OnModuleInit {
   }
 
   private async processForgotPassword(email: string): Promise<void> {
-    const user = await this.users.findOne({ where: { email, isActive: true } });
+    const user = await this.users.findOne({
+      where: { email, isActive: true, emailVerifiedAt: Not(IsNull()) },
+    });
     if (!user?.email) return;
 
     const rawToken = this.tokens.generateOpaqueToken();
@@ -335,7 +341,13 @@ export class AuthService implements OnModuleInit {
       // Si el email cambió en paralelo (p. ej. lo editó un administrador),
       // no se crea el token: el enlace nunca va a un correo que ya no es suyo.
       const locked = await this.lockActiveUser(manager, user.id);
-      if (!locked?.email || locked.email !== user.email) return false;
+      if (
+        !locked?.email ||
+        locked.email !== user.email ||
+        !locked.emailVerifiedAt
+      ) {
+        return false;
+      }
       const repo = manager.getRepository(PasswordResetTokenEntity);
       const recent = await repo.exists({
         where: {
@@ -481,11 +493,15 @@ export class AuthService implements OnModuleInit {
     return [...byId.values()];
   }
 
-  private toSession(
+  private async toSession(
     user: UserEntity,
     activeInstitutionId: string | null,
     institutions: InstitutionMembershipDto[],
-  ): SessionResponseDto {
+  ): Promise<SessionResponseDto> {
+    const pending = await this.emailVerification.pendingEmails(
+      this.dataSource.manager,
+      [user.id],
+    );
     return {
       user: {
         id: user.id,
@@ -493,6 +509,8 @@ export class AuthService implements OnModuleInit {
         firstName: user.firstName,
         lastName: user.lastName,
         email: user.email,
+        emailVerified: user.emailVerifiedAt !== null,
+        pendingEmail: pending.get(user.id) ?? null,
         avatarPath: user.avatarPath,
         mustChangePassword: user.mustChangePassword,
       },

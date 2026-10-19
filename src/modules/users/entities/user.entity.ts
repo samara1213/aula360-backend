@@ -47,6 +47,10 @@ export class UserEntity {
   @Column({ type: 'citext', nullable: true })
   email: string | null;
 
+  /** null = sin verificar: forgot-password no le envía (tarea 2.11.6). */
+  @Column({ name: 'email_verified_at', type: 'timestamptz', nullable: true })
+  emailVerifiedAt: Date | null;
+
   /** Nunca se devuelve: se pide explícitamente con addSelect cuando hace falta. */
   @Column({
     name: 'password_hash',

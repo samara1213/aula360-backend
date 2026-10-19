@@ -196,6 +196,8 @@ export async function runSeed(
           lastName: superAdmin.lastName,
           passwordHash: await bcrypt.hash(superAdmin.password, BCRYPT_COST),
           mustChangePassword: true,
+          // Lo puso el operador en .env: se da por verificado.
+          emailVerifiedAt: new Date(),
         }),
       );
       superAdminResult = 'created';

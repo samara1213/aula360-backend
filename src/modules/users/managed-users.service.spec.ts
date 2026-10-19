@@ -8,6 +8,7 @@ import { ConfigService } from '@nestjs/config';
 import { Test } from '@nestjs/testing';
 import { DataSource, QueryFailedError } from 'typeorm';
 import { AuthUser } from '../../common/interfaces/auth-user.interface';
+import { EmailVerificationService } from '../auth/email-verification.service';
 import { PasswordResetTokenEntity } from '../auth/entities/password-reset-token.entity';
 import { RefreshTokenEntity } from '../auth/entities/refresh-token.entity';
 import { InstitutionEntity } from '../institutions/entities/institution.entity';
@@ -52,6 +53,7 @@ const target = (overrides: Partial<UserEntity> = {}): UserEntity =>
     firstName: 'Ana',
     lastName: 'Pérez',
     email: 'ana@colegio.co',
+    emailVerifiedAt: new Date(),
     phone: null,
     avatarPath: null,
     isActive: true,
@@ -83,6 +85,7 @@ describe('ManagedUsersService', () => {
     insert: jest.fn(),
     update: jest.fn(),
     findOneByOrFail: jest.fn(),
+    findOne: jest.fn(),
   };
   const assignmentRepo = {
     find: jest.fn(),
@@ -97,7 +100,10 @@ describe('ManagedUsersService', () => {
     where: jest.fn().mockReturnThis(),
     getExists: jest.fn(),
   };
-  const profileRepo = { createQueryBuilder: jest.fn(() => profileQb) };
+  const profileRepo = {
+    createQueryBuilder: jest.fn(() => profileQb),
+    existsBy: jest.fn(),
+  };
   const roleRepo = { find: jest.fn() };
   const repos = new Map<unknown, unknown>([
     [UserEntity, userRepo],
@@ -126,6 +132,25 @@ describe('ManagedUsersService', () => {
     insertAssignment: jest.fn(),
   };
   const mail = { send: jest.fn().mockResolvedValue(undefined) };
+  const notice = {
+    kind: 'change' as const,
+    userId: 'user-1',
+    firstName: 'Ana',
+    newEmail: 'otro@colegio.co',
+    previousEmail: null,
+    rawToken: 'raw',
+  };
+  const emailVerification = {
+    pendingEmails: jest.fn(),
+    requestChange: jest.fn(),
+    cancelPending: jest.fn(),
+    notify: jest.fn(),
+    setChangeGuard: jest.fn(),
+    issue: jest.fn(),
+    link: jest.fn(
+      (raw: string) => `http://localhost:5173/verify-email#token=${raw}`,
+    ),
+  };
 
   beforeEach(async () => {
     jest.clearAllMocks();
@@ -144,6 +169,12 @@ describe('ManagedUsersService', () => {
       role: { id: 'role-1' },
       campusScope: null,
     });
+    emailVerification.pendingEmails.mockResolvedValue(new Map());
+    emailVerification.requestChange.mockResolvedValue(notice);
+    emailVerification.issue.mockResolvedValue('raw');
+    emailVerification.cancelPending.mockResolvedValue(0);
+    userRepo.findOne.mockResolvedValue(target({ id: 'admin-1' }));
+    profileRepo.existsBy.mockResolvedValue(false);
     const moduleRef = await Test.createTestingModule({
       providers: [
         ManagedUsersService,
@@ -152,6 +183,7 @@ describe('ManagedUsersService', () => {
         { provide: RoleAssignmentsService, useValue: assignments },
         { provide: UsersService, useValue: { getAvatar: jest.fn() } },
         { provide: MailService, useValue: mail },
+        { provide: EmailVerificationService, useValue: emailVerification },
         {
           provide: ConfigService,
           useValue: { getOrThrow: () => 'http://localhost:5173' },
@@ -190,8 +222,21 @@ describe('ManagedUsersService', () => {
       );
       expect(result.temporaryPassword).toHaveLength(14);
       expect(result).not.toHaveProperty('passwordHash');
+      // Contraseña temporal y enlace para verificar el email, en un correo.
+      expect(emailVerification.issue).toHaveBeenCalledWith(
+        manager,
+        'user-1',
+        'ana@colegio.co',
+        'admin-1',
+        'inst-A',
+      );
       expect(mail.send).toHaveBeenCalledWith(
-        expect.objectContaining({ to: 'ana@colegio.co' }),
+        expect.objectContaining({
+          to: 'ana@colegio.co',
+          text: expect.stringContaining(
+            'http://localhost:5173/verify-email#token=raw',
+          ) as string,
+        }),
       );
     });
 
@@ -319,11 +364,36 @@ describe('ManagedUsersService', () => {
       expect(userRepo.update).not.toHaveBeenCalled();
     });
 
-    it('el email solo lo cambia un SUPER_ADMIN, aunque el usuario sea exclusivo', async () => {
+    it('un email nuevo queda pendiente: no cambia users.email y se avisa tras el commit', async () => {
+      await service.update(institution, 'user-1', { email: 'otro@colegio.co' });
+      expect(emailVerification.requestChange).toHaveBeenCalledWith(
+        manager,
+        expect.objectContaining({ id: 'user-1' }),
+        'otro@colegio.co',
+        'admin-1',
+        'inst-A',
+      );
+      expect(userRepo.update).not.toHaveBeenCalled();
+      expect(emailVerification.notify).toHaveBeenCalledWith(notice);
+    });
+
+    it('el mismo email (con otras mayúsculas) no es un cambio: anula el pendiente (B3)', async () => {
+      emailVerification.cancelPending.mockResolvedValue(1);
+      await service.update(institution, 'user-1', { email: 'ANA@colegio.co' });
+      expect(emailVerification.requestChange).not.toHaveBeenCalled();
+      expect(emailVerification.cancelPending).toHaveBeenCalledWith(
+        manager,
+        'user-1',
+      );
+      expect(emailVerification.notify).toHaveBeenCalledWith(null);
+    });
+
+    it('cambiar el email de un usuario de varias instituciones: 403 genérico', async () => {
+      outsideQb.getExists.mockResolvedValue(true);
       await expect(
         service.update(institution, 'user-1', { email: 'otro@colegio.co' }),
       ).rejects.toThrow(ForbiddenException);
-      expect(userRepo.update).not.toHaveBeenCalled();
+      expect(emailVerification.requestChange).not.toHaveBeenCalled();
     });
 
     it('con alcance por sede, la exclusividad también exige sus sedes', async () => {
@@ -375,9 +445,29 @@ describe('ManagedUsersService', () => {
       expect(permissions.assertWithinCeiling).not.toHaveBeenCalled();
     });
 
-    it('cambiar el email invalida los enlaces de recuperación pendientes', async () => {
-      await service.update(system, 'user-1', { email: 'otro@colegio.co' });
+    it('quitar el email se aplica ya e invalida recuperación y cambios pendientes', async () => {
+      await service.update(institution, 'user-1', { email: null });
+      expect(userRepo.update).toHaveBeenCalledWith(
+        { id: 'user-1' },
+        { email: null, emailVerifiedAt: null },
+      );
       expect(resetRepo.update).toHaveBeenCalled();
+      expect(emailVerification.cancelPending).toHaveBeenCalledWith(
+        manager,
+        'user-1',
+      );
+      // Se avisa al correo verificado que se quitó (M1).
+      expect(emailVerification.notify).toHaveBeenCalledWith({
+        kind: 'removed',
+        email: 'ana@colegio.co',
+        firstName: 'Ana',
+      });
+    });
+
+    it('quitar un email sin verificar no avisa a nadie', async () => {
+      membersQb.getOne.mockResolvedValue(target({ emailVerifiedAt: null }));
+      await service.update(institution, 'user-1', { email: null });
+      expect(emailVerification.notify).toHaveBeenCalledWith(null);
     });
 
     it('rechaza null en columnas obligatorias', async () => {
@@ -395,6 +485,11 @@ describe('ManagedUsersService', () => {
         { isActive: false },
       );
       expect(refreshRepo.delete).toHaveBeenCalledWith({ userId: 'user-1' });
+      // Un cambio de email pendiente no sobrevive (M2).
+      expect(emailVerification.cancelPending).toHaveBeenCalledWith(
+        manager,
+        'user-1',
+      );
     });
 
     it('sin cambio de estado no escribe', async () => {
@@ -431,5 +526,61 @@ describe('ManagedUsersService', () => {
     await expect(service.findOne(system, 'user-1')).rejects.toThrow(
       NotFoundException,
     );
+  });
+
+  describe('revalidación al confirmar un email pedido por otra persona (A1)', () => {
+    type Guard = (m: unknown, c: Record<string, string>) => Promise<void>;
+    const guard = (): Guard => {
+      service.onModuleInit();
+      return (emailVerification.setChangeGuard.mock.calls as Guard[][])[0][0];
+    };
+    const change = {
+      targetId: 'user-1',
+      requesterId: 'admin-1',
+      institutionId: 'inst-A',
+    };
+
+    it('pasa si quien lo pidió sigue pudiendo gestionarlo', async () => {
+      await expect(guard()(manager, change)).resolves.toBeUndefined();
+      expect(permissions.campusScope).toHaveBeenCalledWith(
+        'admin-1',
+        'inst-A',
+        'security.users',
+        'update',
+      );
+    });
+
+    it('falla si quien lo pidió está inactivo', async () => {
+      userRepo.findOne.mockResolvedValue(null);
+      await expect(guard()(manager, change)).rejects.toThrow(
+        ForbiddenException,
+      );
+    });
+
+    it('falla si el usuario ya no es exclusivo de esa institución', async () => {
+      outsideQb.getExists.mockResolvedValue(true);
+      await expect(guard()(manager, change)).rejects.toThrow(
+        ForbiddenException,
+      );
+    });
+
+    it('falla si ya no lo ve con permiso de edición (404)', async () => {
+      membersQb.getOne.mockResolvedValue(null);
+      await expect(guard()(manager, change)).rejects.toThrow(NotFoundException);
+    });
+
+    it('con perfil de docente también prueba el permiso de docentes', async () => {
+      profileRepo.existsBy.mockImplementation((where: { userId: string }) =>
+        Promise.resolve(where.userId === 'user-1'),
+      );
+      membersQb.getOne.mockResolvedValue(null);
+      await expect(guard()(manager, change)).rejects.toThrow(NotFoundException);
+      expect(permissions.campusScope).toHaveBeenCalledWith(
+        'admin-1',
+        'inst-A',
+        'people.teachers',
+        'update',
+      );
+    });
   });
 });

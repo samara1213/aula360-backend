@@ -112,6 +112,7 @@ describe('StudentsService', () => {
     insertUserWithAssignment: jest.fn(),
     afterCreate: jest.fn(),
     applyPersonalChanges: jest.fn(),
+    notifyEmailChange: jest.fn(),
   };
   const assignments = { validateAssignment: jest.fn() };
 

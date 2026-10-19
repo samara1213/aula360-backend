@@ -242,7 +242,7 @@ describe('Docentes y estudiantes (e2e)', () => {
         .expect(404);
     });
 
-    it('edita el perfil y los nombres; el email solo un SUPER_ADMIN', async () => {
+    it('edita el perfil y los nombres; un email nuevo queda pendiente', async () => {
       const res = await adminA
         .patch(`/api/teachers/${teacherA1Id}`)
         .send({ specialty: 'Álgebra', firstName: 'Carlos' })
@@ -251,10 +251,11 @@ describe('Docentes y estudiantes (e2e)', () => {
         specialty: 'Álgebra',
         user: { firstName: 'Carlos' },
       });
-      await adminA
+      const changed = await adminA
         .patch(`/api/teachers/${teacherA1Id}`)
         .send({ email: `e2e-${suffix()}@test.aula360.local` })
-        .expect(403);
+        .expect(200);
+      expect(changed.body.user.email).toBe(res.body.user.email);
     });
 
     it('el rol TEACHER no gestiona docentes: 403', async () => {

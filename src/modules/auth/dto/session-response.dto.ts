@@ -17,6 +17,18 @@ export class SessionUserDto {
   @ApiPropertyOptional({ type: String, nullable: true })
   email: string | null;
 
+  @ApiProperty({
+    description: 'El email está verificado (si no, no recibe recuperación)',
+  })
+  emailVerified: boolean;
+
+  @ApiPropertyOptional({
+    type: String,
+    nullable: true,
+    description: 'Email nuevo pendiente de confirmar con el enlace',
+  })
+  pendingEmail: string | null;
+
   @ApiPropertyOptional({ type: String, nullable: true })
   avatarPath: string | null;
 

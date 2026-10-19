@@ -49,6 +49,24 @@ export class UserResponseDto {
   @ApiProperty({ type: String, nullable: true })
   email: string | null;
 
+  @ApiProperty({
+    description: 'El email está verificado (si no, no recibe recuperación)',
+  })
+  emailVerified: boolean;
+
+  @ApiProperty({
+    description: 'Hay un email nuevo pendiente de que su dueño lo confirme',
+  })
+  hasPendingEmail: boolean;
+
+  @ApiProperty({
+    type: String,
+    nullable: true,
+    description:
+      'El email pendiente; solo lo ve un SUPER_ADMIN (null para los demás)',
+  })
+  pendingEmail: string | null;
+
   @ApiProperty({ type: String, nullable: true })
   phone: string | null;
 
@@ -88,6 +106,7 @@ export class UserResponseDto {
     user: UserEntity,
     assignments: UserInstitutionRoleEntity[],
     viewerIsSuperAdmin: boolean,
+    pendingEmail: string | null = null,
   ): UserResponseDto {
     const hidden = user.userType === 'SUPER_ADMIN' && !viewerIsSuperAdmin;
     return {
@@ -98,6 +117,9 @@ export class UserResponseDto {
       firstName: user.firstName,
       lastName: user.lastName,
       email: hidden ? null : user.email,
+      emailVerified: hidden ? false : user.emailVerifiedAt !== null,
+      hasPendingEmail: !hidden && pendingEmail !== null,
+      pendingEmail: viewerIsSuperAdmin ? pendingEmail : null,
       phone: hidden ? null : user.phone,
       hasAvatar: user.avatarPath !== null,
       isActive: user.isActive,

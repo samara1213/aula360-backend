@@ -27,6 +27,9 @@ export class ProfileUserDto {
   @ApiProperty({ type: String, nullable: true })
   email: string | null;
 
+  @ApiProperty({ description: 'El email está verificado' })
+  emailVerified: boolean;
+
   @ApiProperty({ type: String, nullable: true })
   phone: string | null;
 
@@ -47,6 +50,7 @@ export class ProfileUserDto {
       firstName: user.firstName,
       lastName: user.lastName,
       email: user.email,
+      emailVerified: user.emailVerifiedAt !== null,
       phone: user.phone,
       isActive: user.isActive,
       mustChangePassword: user.mustChangePassword,

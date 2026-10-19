@@ -5,6 +5,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  OnModuleInit,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as bcrypt from 'bcrypt';
@@ -29,6 +30,12 @@ import { rejectNullFields } from '../../common/validators/reject-null-fields';
 import { PasswordResetTokenEntity } from '../auth/entities/password-reset-token.entity';
 import { RefreshTokenEntity } from '../auth/entities/refresh-token.entity';
 import { InstitutionEntity } from '../institutions/entities/institution.entity';
+import {
+  EmailNotice,
+  EmailVerificationService,
+  sameEmail,
+  ThirdPartyChange,
+} from '../auth/email-verification.service';
 import { MailService } from '../mail/mail.service';
 import { RoleMenuPermissionEntity } from '../security/entities/role-menu-permission.entity';
 import { RoleEntity } from '../security/entities/role.entity';
@@ -78,9 +85,9 @@ export type UsersScope = AssignmentScope;
  *   solo si todas sus asignaciones están en esta institución y en las sedes
  *   de quien actúa (o lo hace un SUPER_ADMIN). Evita que un colegio tome la
  *   cuenta de alguien que también es administrador en otro.
- * - Email de un usuario ya creado: solo el SUPER_ADMIN (hasta que exista la
- *   verificación de email, tarea 2.11.6): un administrador podría poner un
- *   correo suyo y tomar la cuenta cuando el usuario reciba más permisos.
+ * - Email de un usuario ya creado (tarea 2.11.6): con exclusividad, queda
+ *   pendiente hasta que el dueño del correo nuevo lo confirme con el enlace;
+ *   al anterior se le avisa. Quitarlo (null) se aplica de inmediato.
  * - Los SUPER_ADMIN no se ven desde una institución (404).
  * - Los 403 son genéricos: no revelan si pertenece a otra institución o sede.
  * - Las acciones sensibles quedan en el log de auditoría (sin secretos).
@@ -89,7 +96,7 @@ export type UsersScope = AssignmentScope;
 const MANAGE_FORBIDDEN = 'No tiene permiso para gestionar a este usuario';
 const SUPER_ADMIN_ONLY = 'Este cambio solo lo puede hacer un SUPER_ADMIN';
 @Injectable()
-export class ManagedUsersService {
+export class ManagedUsersService implements OnModuleInit {
   private readonly logger = new Logger(ManagedUsersService.name);
 
   constructor(
@@ -99,7 +106,15 @@ export class ManagedUsersService {
     private readonly avatars: UsersService,
     private readonly mail: MailService,
     private readonly config: ConfigService,
+    private readonly emailVerification: EmailVerificationService,
   ) {}
+
+  /** Al confirmar un email pedido por otra persona se revalidan estas reglas. */
+  onModuleInit(): void {
+    this.emailVerification.setChangeGuard((manager, change) =>
+      this.assertStillAllowed(manager, change),
+    );
+  }
 
   // ------------------------------------------------------------- lectura
 
@@ -129,18 +144,16 @@ export class ManagedUsersService {
       .addOrderBy('u.id', 'ASC');
     const { skip, take } = toSkipTake(query);
     const [users, total] = await qb.skip(skip).take(take).getManyAndCount();
-    const byUser = await this.loadAssignments(
-      manager,
-      scope,
-      campusScope,
-      users.map((u) => u.id),
-    );
+    const ids = users.map((u) => u.id);
+    const byUser = await this.loadAssignments(manager, scope, campusScope, ids);
+    const pending = await this.emailVerification.pendingEmails(manager, ids);
     return paginate(
       users.map((u) =>
         UserResponseDto.from(
           u,
           byUser.get(u.id) ?? [],
           this.isSuperAdmin(scope),
+          pending.get(u.id) ?? null,
         ),
       ),
       total,
@@ -250,7 +263,10 @@ export class ManagedUsersService {
     return id;
   }
 
-  /** Después del commit: auditoría y correo con la contraseña temporal. */
+  /**
+   * Después del commit: auditoría y correo con la contraseña temporal y el
+   * enlace para verificar el email (queda sin verificar hasta abrirlo).
+   */
   async afterCreate(
     scope: UsersScope,
     userId: string,
@@ -261,7 +277,26 @@ export class ManagedUsersService {
       .getRepository(UserEntity)
       .findOneByOrFail({ id: userId });
     this.audit(scope, 'user.created', userId, details);
-    this.sendTemporaryPassword(user, temporaryPassword, 'created');
+    let verifyLink: string | null = null;
+    if (user.email) {
+      try {
+        verifyLink = this.emailVerification.link(
+          await this.emailVerification.issue(
+            this.dataSource.manager,
+            user.id,
+            user.email,
+            scope.user.userId,
+            scope.institutionId,
+          ),
+        );
+      } catch (error) {
+        // Sin enlace igual se envía la contraseña; se puede pedir otro con resend.
+        this.logger.error(
+          `No se pudo crear el enlace de verificación: ${(error as { code?: string }).code ?? 'Error'}`,
+        );
+      }
+    }
+    this.sendTemporaryPassword(user, temporaryPassword, 'created', verifyLink);
     return user;
   }
 
@@ -271,7 +306,7 @@ export class ManagedUsersService {
     dto: UpdateUserDto,
   ): Promise<UserResponseDto> {
     rejectNullFields(dto, USER_NOT_NULL_FIELDS);
-    await this.dataSource.transaction(async (manager) => {
+    const notice = await this.dataSource.transaction(async (manager) => {
       await this.assertInstitutionExists(manager, scope);
       const { user, campusScope } = await this.findVisible(
         manager,
@@ -280,16 +315,19 @@ export class ManagedUsersService {
         'update',
         { lock: true },
       );
-      await this.applyPersonalChanges(manager, scope, user, campusScope, dto);
+      return this.applyPersonalChanges(manager, scope, user, campusScope, dto);
     });
+    this.notifyEmailChange(notice);
     return this.findOne(scope, id);
   }
 
   /**
    * Dentro de la transacción del llamador y con el usuario ya bloqueado
    * (FOR UPDATE): reglas de gestión (techo, autogestión) y cambios de datos
-   * personales (email solo SUPER_ADMIN; documento con exclusividad). Se llama
-   * aunque no haya datos personales que cambiar: también protege los perfiles.
+   * personales (email y documento con exclusividad). Se llama aunque no haya
+   * datos personales que cambiar: también protege los perfiles.
+   * Un email nuevo no se aplica: queda pendiente y se devuelve el aviso, que
+   * el llamador envía con notifyEmailChange después del commit.
    */
   async applyPersonalChanges(
     manager: EntityManager,
@@ -297,20 +335,18 @@ export class ManagedUsersService {
     user: UserEntity,
     campusScope: CampusScope,
     dto: UpdateUserDto,
-  ): Promise<void> {
+  ): Promise<EmailNotice | null> {
     rejectNullFields(dto, USER_NOT_NULL_FIELDS);
     await this.assertCanManage(manager, scope, user);
 
-    const emailChanged = dto.email !== undefined && dto.email !== user.email;
+    const emailChanged =
+      dto.email !== undefined && !sameEmail(dto.email, user.email);
     const documentChanged =
       (dto.documentType !== undefined &&
         dto.documentType !== user.documentType) ||
       (dto.documentNumber !== undefined &&
         dto.documentNumber !== user.documentNumber);
-    if (emailChanged && !this.isSuperAdmin(scope)) {
-      throw new ForbiddenException(SUPER_ADMIN_ONLY);
-    }
-    if (documentChanged) {
+    if (emailChanged || documentChanged) {
       await this.assertExclusive(manager, scope, user.id, campusScope);
     }
 
@@ -318,19 +354,119 @@ export class ManagedUsersService {
     if (dto.firstName !== undefined) changes.firstName = dto.firstName;
     if (dto.lastName !== undefined) changes.lastName = dto.lastName;
     if (dto.phone !== undefined) changes.phone = dto.phone;
-    if (emailChanged) changes.email = dto.email ?? null;
+    // Quitarlo se aplica ya; uno nuevo queda pendiente hasta confirmarlo.
+    const removeEmail = emailChanged && dto.email === null;
+    if (removeEmail) {
+      changes.email = null;
+      changes.emailVerifiedAt = null;
+    }
     if (dto.documentType !== undefined) changes.documentType = dto.documentType;
     if (dto.documentNumber !== undefined) {
       changes.documentNumber = dto.documentNumber;
     }
-    if (Object.keys(changes).length === 0) return;
+
+    let notice: EmailNotice | null = null;
+    if (emailChanged && dto.email) {
+      notice = await this.emailVerification.requestChange(
+        manager,
+        user,
+        dto.email,
+        scope.user.userId,
+        scope.institutionId,
+      );
+      this.audit(scope, 'user.email-change-requested', user.id);
+    } else if (
+      dto.email !== undefined &&
+      !emailChanged &&
+      (await this.emailVerification.cancelPending(manager, user.id)) > 0
+    ) {
+      // El mismo email: un administrador anula un cambio pendiente (B3).
+      this.audit(scope, 'user.email-change-cancelled', user.id);
+    }
+    if (Object.keys(changes).length === 0) return notice;
 
     await this.saveUserChanges(manager, user.id, changes);
-    // Un enlace de recuperación enviado al correo anterior deja de servir.
-    if (emailChanged) await this.invalidateResetTokens(manager, user.id);
+    if (removeEmail) {
+      // Ni enlaces de recuperación ni cambios pendientes al correo quitado.
+      await this.invalidateResetTokens(manager, user.id);
+      await this.emailVerification.cancelPending(manager, user.id);
+      this.audit(scope, 'user.email-removed', user.id);
+      // Se avisa al correo verificado que se quitó: quitarlo y poner otro no
+      // puede pasar sin que el titular se entere (M1 de la fase 11b).
+      if (user.email && user.emailVerifiedAt) {
+        notice = {
+          kind: 'removed',
+          email: user.email,
+          firstName: user.firstName,
+        };
+      }
+    }
     this.audit(scope, 'user.updated', user.id, {
       fields: Object.keys(changes),
     });
+    return notice;
+  }
+
+  /** Después del commit: enlace al correo nuevo y avisos al anterior. */
+  notifyEmailChange(notice: EmailNotice | null): void {
+    this.emailVerification.notify(notice);
+  }
+
+  /**
+   * Al confirmar un email pedido por otra persona (hallazgo A1 de la fase
+   * 11b): quien lo pidió sigue activa y puede seguir gestionando al usuario
+   * en esa institución con las mismas reglas que al pedirlo (permiso de
+   * edición en sus sedes, techo y exclusividad). Sirve el permiso de usuarios
+   * o el del perfil que el usuario tenga allí (docente o estudiante).
+   */
+  private async assertStillAllowed(
+    manager: EntityManager,
+    change: ThirdPartyChange,
+  ): Promise<void> {
+    const requester = await manager.getRepository(UserEntity).findOne({
+      where: { id: change.requesterId, isActive: true },
+    });
+    if (!requester) throw new ForbiddenException(MANAGE_FORBIDDEN);
+    const actor = {
+      userId: requester.id,
+      institutionId: change.institutionId,
+      userType: requester.userType,
+      mustChangePassword: false,
+      sessionId: '',
+    };
+    const kind =
+      requester.userType === 'SUPER_ADMIN' ? 'system' : 'institution';
+    const hasProfile = (entity: typeof TeacherEntity | typeof StudentEntity) =>
+      manager.getRepository(entity).existsBy({
+        userId: change.targetId,
+        institutionId: change.institutionId,
+      });
+    const permissions = [USERS_PERMISSION];
+    if (await hasProfile(TeacherEntity)) permissions.push('people.teachers');
+    if (await hasProfile(StudentEntity)) permissions.push('people.students');
+    let denied: unknown = new ForbiddenException(MANAGE_FORBIDDEN);
+    for (const permission of permissions) {
+      const scope: UsersScope = {
+        kind,
+        user: actor,
+        institutionId: change.institutionId,
+        permission,
+      };
+      try {
+        const { user, campusScope } = await this.findVisible(
+          manager,
+          scope,
+          change.targetId,
+          'update',
+        );
+        await this.assertCanManage(manager, scope, user);
+        await this.assertExclusive(manager, scope, user.id, campusScope);
+        return;
+      } catch (error) {
+        denied = error;
+      }
+    }
+    throw denied;
   }
 
   /** Desactivar cierra todas sus sesiones (pierde el acceso en la siguiente petición). */
@@ -358,6 +494,8 @@ export class ManagedUsersService {
       if (!dto.isActive) {
         await this.endAllSessions(manager, user.id);
         await this.invalidateResetTokens(manager, user.id);
+        // Un cambio de email pendiente no sobrevive a la desactivación (M2).
+        await this.emailVerification.cancelPending(manager, user.id);
       }
       this.audit(
         scope,
@@ -404,6 +542,7 @@ export class ManagedUsersService {
         );
       await this.endAllSessions(manager, found.user.id);
       await this.invalidateResetTokens(manager, found.user.id);
+      await this.emailVerification.cancelPending(manager, found.user.id);
       this.audit(scope, 'user.temporary-password', found.user.id);
       return found.user;
     });
@@ -621,10 +760,14 @@ export class ManagedUsersService {
     const byUser = await this.loadAssignments(manager, scope, campusScope, [
       user.id,
     ]);
+    const pending = await this.emailVerification.pendingEmails(manager, [
+      user.id,
+    ]);
     return UserResponseDto.from(
       user,
       byUser.get(user.id) ?? [],
       this.isSuperAdmin(scope),
+      pending.get(user.id) ?? null,
     );
   }
 
@@ -747,6 +890,7 @@ export class ManagedUsersService {
     user: UserEntity,
     password: string,
     reason: 'created' | 'reset',
+    verifyLink: string | null = null,
   ): void {
     if (!user.email) return;
     const login = `${this.config.getOrThrow<string>('FRONTEND_URL')}/login`;
@@ -758,8 +902,16 @@ export class ManagedUsersService {
       .send({
         to: user.email,
         subject: 'Aula360 - Contraseña temporal',
-        text: `Hola ${user.firstName}, ${intro}.\nContraseña temporal: ${password}\nEntra a ${login} y cámbiala al iniciar sesión.`,
-        html: `<p>Hola ${escapeHtml(user.firstName)}, ${intro}.</p><p>Contraseña temporal: <strong>${escapeHtml(password)}</strong></p><p>Entra a <a href="${login}">Aula360</a> y cámbiala al iniciar sesión.</p>`,
+        text:
+          `Hola ${user.firstName}, ${intro}.\nContraseña temporal: ${password}\nEntra a ${login} y cámbiala al iniciar sesión.` +
+          (verifyLink
+            ? `\nConfirma también tu correo (vence en 24 horas): ${verifyLink}`
+            : ''),
+        html:
+          `<p>Hola ${escapeHtml(user.firstName)}, ${intro}.</p><p>Contraseña temporal: <strong>${escapeHtml(password)}</strong></p><p>Entra a <a href="${login}">Aula360</a> y cámbiala al iniciar sesión.</p>` +
+          (verifyLink
+            ? `<p>Confirma también tu correo (vence en 24 horas): <a href="${verifyLink}">confirmar correo</a></p>`
+            : ''),
       })
       .catch((error: Error) =>
         this.logger.error(

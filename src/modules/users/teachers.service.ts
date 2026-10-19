@@ -157,12 +157,12 @@ export class TeachersService {
     id: string,
     dto: UpdateTeacherDto,
   ): Promise<TeacherResponseDto> {
-    await this.dataSource.transaction(async (manager) => {
+    const notice = await this.dataSource.transaction(async (manager) => {
       const campusScope = await this.campusScope(scope, 'update');
       const teacher = await this.findVisible(manager, scope, campusScope, id);
       const user = await lockUser(manager, teacher.userId);
       // Reglas de gestión siempre (aunque solo cambie el perfil).
-      await this.users.applyPersonalChanges(
+      const change = await this.users.applyPersonalChanges(
         manager,
         scope,
         user,
@@ -175,7 +175,9 @@ export class TeachersService {
           .getRepository(TeacherEntity)
           .update({ id: teacher.id }, changes);
       }
+      return change;
     });
+    this.users.notifyEmailChange(notice);
     return this.findOne(scope, id);
   }
 

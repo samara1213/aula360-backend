@@ -11,6 +11,8 @@ import { UserInstitutionRoleEntity } from '../security/entities/user-institution
 import { UserEntity } from '../users/entities/user.entity';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
+import { EmailVerificationService } from './email-verification.service';
+import { EmailVerificationTokenEntity } from './entities/email-verification-token.entity';
 import { PasswordResetTokenEntity } from './entities/password-reset-token.entity';
 import { RefreshTokenEntity } from './entities/refresh-token.entity';
 import { TokenService } from './token.service';
@@ -25,6 +27,7 @@ import { TokenService } from './token.service';
       RoleMenuPermissionEntity,
       RefreshTokenEntity,
       PasswordResetTokenEntity,
+      EmailVerificationTokenEntity,
     ]),
     MailModule,
   ],
@@ -32,6 +35,7 @@ import { TokenService } from './token.service';
   providers: [
     AuthService,
     TokenService,
+    EmailVerificationService,
     // Guards globales, en este orden: sesión, límite de peticiones (ya con
     // req.user, para contar por usuario donde se pida) y permisos. Las rutas
     // @Public (login) pasan la sesión sin coste y siguen limitadas.
@@ -39,6 +43,6 @@ import { TokenService } from './token.service';
     { provide: APP_GUARD, useClass: ThrottlerGuard },
     { provide: APP_GUARD, useClass: PermissionsGuard },
   ],
-  exports: [TokenService],
+  exports: [TokenService, EmailVerificationService],
 })
 export class AuthModule {}

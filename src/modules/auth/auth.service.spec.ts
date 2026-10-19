@@ -6,6 +6,7 @@ import { MailService } from '../mail/mail.service';
 import { UserInstitutionRoleEntity } from '../security/entities/user-institution-role.entity';
 import { UserEntity } from '../users/entities/user.entity';
 import { AuthService, INVALID_CREDENTIALS } from './auth.service';
+import { EmailVerificationService } from './email-verification.service';
 import { PasswordResetTokenEntity } from './entities/password-reset-token.entity';
 import { RefreshTokenEntity } from './entities/refresh-token.entity';
 import { TokenService } from './token.service';
@@ -47,6 +48,7 @@ const activeUser = {
   firstName: 'Ana',
   lastName: 'Pérez',
   email: 'ana@colegio.co',
+  emailVerifiedAt: new Date(),
   avatarPath: null,
   passwordHash: '$2b$12$hash',
   isActive: true,
@@ -102,6 +104,9 @@ function setup({
     tokens as unknown as TokenService,
     mail as unknown as MailService,
     config as unknown as ConfigService,
+    {
+      pendingEmails: jest.fn().mockResolvedValue(new Map()),
+    } as unknown as EmailVerificationService,
     usersRepo as unknown as Repository<UserEntity>,
     membershipsRepo as unknown as Repository<UserInstitutionRoleEntity>,
     refreshRepo as unknown as Repository<RefreshTokenEntity>,
@@ -405,6 +410,29 @@ describe('AuthService', () => {
     it('no envía otro correo si hay una solicitud reciente (cooldown)', async () => {
       const { service, resetRepo, mail } = setup();
       resetRepo.exists.mockResolvedValue(true);
+      service.forgotPassword('ana@colegio.co');
+      await flush();
+      expect(resetRepo.insert).not.toHaveBeenCalled();
+      expect(mail.send).not.toHaveBeenCalled();
+    });
+
+    it('solo busca correos verificados (tarea 2.11.6)', async () => {
+      const { service, usersRepo } = setup();
+      service.forgotPassword('ana@colegio.co');
+      await flush();
+      const where = (
+        usersRepo.findOne.mock.calls[0] as [
+          { where: { emailVerifiedAt: { _type: string } } },
+        ]
+      )[0].where;
+      expect(where.emailVerifiedAt._type).toBe('not');
+    });
+
+    it('si el email dejó de estar verificado en paralelo, no crea token', async () => {
+      const { service, usersRepo, resetRepo, mail } = setup();
+      usersRepo.findOne
+        .mockResolvedValueOnce(activeUser)
+        .mockResolvedValueOnce({ ...activeUser, emailVerifiedAt: null });
       service.forgotPassword('ana@colegio.co');
       await flush();
       expect(resetRepo.insert).not.toHaveBeenCalled();

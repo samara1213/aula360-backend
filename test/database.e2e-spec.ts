@@ -32,7 +32,7 @@ describe('Base de datos (e2e)', () => {
     const rows = await dataSource.query<{ table_name: string }[]>(
       `SELECT table_name FROM information_schema.role_table_grants
         WHERE table_schema = 'public'
-          AND table_name IN ('performance_levels', 'report_card_templates', 'storage_deletions')
+          AND table_name IN ('performance_levels', 'report_card_templates', 'storage_deletions', 'email_verification_tokens')
           AND grantee IN ('anon', 'authenticated')`,
     );
     expect(rows).toEqual([]);

@@ -391,20 +391,29 @@ describe('Usuarios (e2e)', () => {
         .expect(403);
     });
 
-    it('el SUPER_ADMIN sí puede cambiar ese email', async () => {
+    it('el SUPER_ADMIN sí puede pedir el cambio de ese email (queda pendiente)', async () => {
       const email = `e2e-${suffix()}@test.aula360.local`;
       const res = await superAdmin
         .patch(`/api/institutions/${institutionA.id}/users/${sharedUser.id}`)
         .send({ email })
         .expect(200);
-      expect(res.body.email).toBe(email);
+      expect(res.body.email).toBe(sharedUser.email);
+      expect(res.body.pendingEmail).toBe(email);
     });
 
-    it('email de un usuario exclusivo: también 403 (solo SUPER_ADMIN, hasta que exista la verificación)', async () => {
-      await adminA
+    it('email de un usuario exclusivo: queda pendiente hasta que su dueño lo confirme (2.11.6)', async () => {
+      const email = `e2e-${suffix()}@test.aula360.local`;
+      const res = await adminA
         .patch(`/api/users/${teacherA2User.id}`)
-        .send({ email: `e2e-${suffix()}@test.aula360.local` })
-        .expect(403);
+        .send({ email })
+        .expect(200);
+      // El correo pendiente completo solo lo ve un SUPER_ADMIN (B4 de la fase 11b).
+      expect(res.body).toMatchObject({
+        email: teacherA2User.email,
+        emailVerified: true,
+        hasPendingEmail: true,
+        pendingEmail: null,
+      });
     });
 
     it('documento de un usuario exclusivo: 200', async () => {
@@ -669,14 +678,20 @@ describe('Usuarios (e2e)', () => {
         .expect(400);
     });
 
-    it('el SUPER_ADMIN cambia el email e invalida los enlaces pendientes', async () => {
+    it('al confirmar el email nuevo, los enlaces de recuperación pendientes dejan de servir', async () => {
       const target = await ctx.data.createUser({ userType: 'TEACHER' });
       await ctx.data.assignGlobalRole(target.id, institutionA.id, 'TEACHER');
       const token = await ctx.data.createResetToken(target.id);
+      const email = `e2e-${suffix()}@test.aula360.local`;
       await superAdmin
         .patch(`/api/institutions/${institutionA.id}/users/${target.id}`)
-        .send({ email: `e2e-${suffix()}@test.aula360.local` })
+        .send({ email })
         .expect(200);
+      await ctx.mail.waitFor(email);
+      await request(server())
+        .post('/api/auth/verify-email')
+        .send({ token: ctx.mail.verifyToken(email) })
+        .expect(204);
       await request(server())
         .post('/api/auth/reset-password')
         .send({ token, newPassword: 'Nueva*Clave2026' })
