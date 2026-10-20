@@ -1,6 +1,8 @@
+import { randomBytes } from 'crypto';
 import * as request from 'supertest';
 import { IsNull } from 'typeorm';
 import { PasswordResetTokenEntity } from '../src/modules/auth/entities/password-reset-token.entity';
+import { TokenCleanupService } from '../src/modules/auth/token-cleanup.service';
 import { InstitutionEntity } from '../src/modules/institutions/entities/institution.entity';
 import { UserEntity } from '../src/modules/users/entities/user.entity';
 import {
@@ -266,6 +268,147 @@ describe('Auth (e2e)', () => {
     it('sin cookie responde 401', async () => {
       await request(server()).post('/api/auth/refresh-token').expect(401);
     });
+  });
+
+  describe('purga de tokens vencidos (TokenCleanupService)', () => {
+    /** Inserta un token con vencimiento relativo (días; negativo = vencido). */
+    async function insertToken(
+      table: string,
+      userId: string,
+      days: number,
+      extra: Record<string, string> = {},
+    ): Promise<string> {
+      const columns = [
+        'user_id',
+        'token_hash',
+        'expires_at',
+        ...Object.keys(extra),
+      ];
+      const values = [
+        userId,
+        randomBytes(32).toString('hex'),
+        days,
+        ...Object.values(extra),
+      ];
+      const placeholders = values.map((_, i) =>
+        i === 2 ? `CURRENT_TIMESTAMP + $3 * interval '1 day'` : `$${i + 1}`,
+      );
+      const [{ id }] = await ctx.dataSource.query<{ id: string }[]>(
+        `INSERT INTO ${table} (${columns.join(', ')})
+         VALUES (${placeholders.join(', ')}) RETURNING id`,
+        values,
+      );
+      return id;
+    }
+
+    async function exists(table: string, id: string): Promise<boolean> {
+      const rows = await ctx.dataSource.query<unknown[]>(
+        `SELECT 1 FROM ${table} WHERE id = $1`,
+        [id],
+      );
+      return rows.length > 0;
+    }
+
+    it('borra solo lo vencido hace más de 30 días y conserva la detección de reuso', async () => {
+      const user = await ctx.data.createUser();
+      await ctx.data.assignGlobalRole(user.id, institutionA.id);
+      const email = { email: user.email! };
+
+      const old = {
+        refresh_tokens: await insertToken('refresh_tokens', user.id, -31),
+        password_reset_tokens: await insertToken(
+          'password_reset_tokens',
+          user.id,
+          -31,
+        ),
+        email_verification_tokens: await insertToken(
+          'email_verification_tokens',
+          user.id,
+          -31,
+          email,
+        ),
+      };
+      const kept = {
+        refresh_tokens: await insertToken('refresh_tokens', user.id, -29),
+        password_reset_tokens: await insertToken(
+          'password_reset_tokens',
+          user.id,
+          -1,
+        ),
+        email_verification_tokens: await insertToken(
+          'email_verification_tokens',
+          user.id,
+          1,
+          email,
+        ),
+      };
+
+      // Refresh rotado (revocado) que venció hace 29 días: se conserva.
+      const { res: loginRes } = await loginAgent(user.email!);
+      const revoked = findCookie(loginRes.headers, 'refresh_token')!.split(
+        ';',
+      )[0];
+      await request(server())
+        .post('/api/auth/refresh-token')
+        .set('Cookie', revoked)
+        .expect(204);
+      await ctx.dataSource.query(
+        `UPDATE refresh_tokens
+            SET expires_at = CURRENT_TIMESTAMP - interval '29 days'
+          WHERE user_id = $1 AND revoked_at IS NOT NULL`,
+        [user.id],
+      );
+
+      // La purga es global: en la base compartida también borra tokens
+      // vencidos hace más de 30 días de otros usuarios. Ninguna e2e debe
+      // depender de tokens así (I5 de la revisión de la tarea 2.11.15).
+      const result = await ctx.app.get(TokenCleanupService).purgeExpired();
+      expect(result).not.toBeNull();
+
+      for (const [table, id] of Object.entries(old)) {
+        expect(await exists(table, id)).toBe(false);
+      }
+      for (const [table, id] of Object.entries(kept)) {
+        expect(await exists(table, id)).toBe(true);
+      }
+
+      // El revocado sigue en la tabla: presentarlo cierra todas las sesiones
+      // (la rotada y el insertado sin revocar que venció hace 29 días).
+      expect(await ctx.data.activeRefreshTokens(user.id)).toBe(2);
+      await request(server())
+        .post('/api/auth/refresh-token')
+        .set('Cookie', revoked)
+        .expect(401);
+      expect(await ctx.data.activeRefreshTokens(user.id)).toBe(0);
+    });
+
+    it('no espera filas bloqueadas por otra transacción (SKIP LOCKED)', async () => {
+      const user = await ctx.data.createUser();
+      const locked = await insertToken('refresh_tokens', user.id, -31);
+      const free = await insertToken('refresh_tokens', user.id, -31);
+
+      // Otra transacción retiene la fila, como al revocar todas las sesiones.
+      const runner = ctx.dataSource.createQueryRunner();
+      await runner.connect();
+      await runner.startTransaction();
+      try {
+        await runner.query(
+          `SELECT id FROM refresh_tokens WHERE id = $1 FOR UPDATE`,
+          [locked],
+        );
+        const result = await ctx.app.get(TokenCleanupService).purgeExpired();
+        expect(result).not.toBeNull();
+        expect(await exists('refresh_tokens', free)).toBe(false);
+        expect(await exists('refresh_tokens', locked)).toBe(true);
+      } finally {
+        await runner.rollbackTransaction();
+        await runner.release();
+      }
+
+      // La pasada siguiente la borra.
+      await ctx.app.get(TokenCleanupService).purgeExpired();
+      expect(await exists('refresh_tokens', locked)).toBe(false);
+    }, 15_000);
   });
 
   describe('POST /api/auth/logout', () => {

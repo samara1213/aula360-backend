@@ -90,6 +90,8 @@ export const envValidationSchema: Joi.ObjectSchema<Record<string, unknown>> =
     // Apaga el proceso que reintenta los borrados pendientes de Storage (por
     // ejemplo, en una instancia que no debe tocar Supabase). En e2e no corre.
     STORAGE_DELETIONS_DISABLED: Joi.boolean().default(false),
+    // Apaga la purga periódica de tokens vencidos (tarea 2.11.15). En e2e no corre.
+    TOKEN_CLEANUP_DISABLED: Joi.boolean().default(false),
 
     // /api/docs: por defecto solo en desarrollo; nunca en producción (B6 de la
     // revisión de la fase 11d). No pide sesión: no activarlo en un entorno expuesto.

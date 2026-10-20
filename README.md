@@ -62,6 +62,6 @@ La documentación de la API (Swagger) queda en `/api/docs` cuando `SWAGGER_ENABL
 
 **Boletines (Chromium):** el contenedor necesita las librerías de Chrome y fuentes (DejaVu o Liberation), idealmente sin salida a Internet; `PDF_CHROMIUM_NO_SANDBOX=true` solo si corre como root.
 
-**Procesos:** una sola instancia del backend mientras la generación masiva de boletines y los límites de peticiones guarden su estado en memoria (ver la deuda técnica en `tasks.md`).
+**Procesos:** una sola instancia del backend mientras la generación masiva de boletines y los límites de peticiones guarden su estado en memoria (ver la deuda técnica en `tasks.md`). Procesos periódicos dentro de la app: reintentos de borrados de Storage (cada 5 min, `STORAGE_DELETIONS_DISABLED`) y purga de tokens vencidos hace más de 30 días (cada 6 h, `TOKEN_CLEANUP_DISABLED`). La purga recorre las tablas de tokens sin índice en `expires_at`: vigilar su duración frente al `statement_timeout`; si crece, crear el índice con una migración (`CREATE INDEX CONCURRENTLY`). Si la primera pasada en producción borra mucho, revisar `n_dead_tup` y, si hace falta, `VACUUM` manual.
 
 **Logs:** TypeORM nunca escribe los parámetros de las consultas (logger propio); no usar `NODE_ENV=development` con datos reales (sin SMTP, el texto de los correos va al log).

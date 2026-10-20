@@ -15,6 +15,7 @@ import { EmailVerificationService } from './email-verification.service';
 import { EmailVerificationTokenEntity } from './entities/email-verification-token.entity';
 import { PasswordResetTokenEntity } from './entities/password-reset-token.entity';
 import { RefreshTokenEntity } from './entities/refresh-token.entity';
+import { TokenCleanupService } from './token-cleanup.service';
 import { TokenService } from './token.service';
 
 @Module({
@@ -36,6 +37,7 @@ import { TokenService } from './token.service';
     AuthService,
     TokenService,
     EmailVerificationService,
+    TokenCleanupService,
     // Guards globales, en este orden: sesión, límite de peticiones (ya con
     // req.user, para contar por usuario donde se pida) y permisos. Las rutas
     // @Public (login) pasan la sesión sin coste y siguen limitadas.
