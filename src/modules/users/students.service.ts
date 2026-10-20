@@ -235,7 +235,7 @@ export class StudentsService {
     dto: UpdateStudentDto,
   ): Promise<StudentResponseDto> {
     const notice = await this.dataSource.transaction(async (manager) => {
-      const campusScope = await this.campusScope(scope, 'update');
+      const campusScope = await this.campusScope(scope, 'update', manager);
       const found = await this.findVisible(manager, scope, campusScope, id);
       const user = await lockUser(manager, found.userId);
       // Se relee (FOR UPDATE) con el usuario ya bloqueado: un cambio de sede
@@ -520,12 +520,14 @@ export class StudentsService {
   private campusScope(
     scope: UsersScope,
     action: PermissionAction,
+    manager?: EntityManager,
   ): Promise<CampusScope> {
     return this.permissions.campusScope(
       scope.user.userId,
       scope.institutionId,
       STUDENTS_PERMISSION,
       action,
+      { manager },
     );
   }
 }

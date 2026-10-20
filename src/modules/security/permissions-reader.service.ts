@@ -1,6 +1,6 @@
 import { ForbiddenException, Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { EntityManager, Repository } from 'typeorm';
 import { PermissionAction } from '../../common/decorators/require-permission.decorator';
 import { ACTION_COLUMN } from '../../common/guards/permissions.guard';
 import { AuthUser } from '../../common/interfaces/auth-user.interface';
@@ -34,6 +34,8 @@ export interface MenuPermission extends PermissionFlags {
  * Consultas de solo lectura sobre los permisos efectivos de un usuario en una
  * institución: suma de todos sus roles vigentes (asignación de toda la
  * institución o de sede activa; rol global o de esa misma institución).
+ * Dentro de una transacción se pasa su manager: así no se pide otra conexión
+ * del pool mientras la transacción retiene la suya (M2 de la fase 11e).
  */
 @Injectable()
 export class PermissionsReader {
@@ -49,8 +51,12 @@ export class PermissionsReader {
     userId: string,
     institutionId: string,
     target?: PermissionTarget,
+    manager?: EntityManager,
   ): Promise<Map<string, PermissionFlags>> {
-    const qb = this.permissions
+    const repo = manager
+      ? manager.getRepository(RoleMenuPermissionEntity)
+      : this.permissions;
+    const qb = repo
       .createQueryBuilder('p')
       .select('p.menu_option_id', 'menuOptionId')
       .addSelect('bool_or(p.can_create)', 'canCreate')
@@ -96,9 +102,15 @@ export class PermissionsReader {
     institutionId: string,
     requested: readonly MenuPermission[],
     target: PermissionTarget,
+    manager?: EntityManager,
   ): Promise<void> {
     if (actor.userType === 'SUPER_ADMIN' || requested.length === 0) return;
-    const own = await this.effective(actor.userId, institutionId, target);
+    const own = await this.effective(
+      actor.userId,
+      institutionId,
+      target,
+      manager,
+    );
     const exceeds = requested.some((perm) => {
       const held = own.get(perm.menuOptionId);
       return (
@@ -132,9 +144,17 @@ export class PermissionsReader {
     {
       excludeGlobalRole,
       onlyGlobalRole,
-    }: { excludeGlobalRole?: string; onlyGlobalRole?: string } = {},
+      manager,
+    }: {
+      excludeGlobalRole?: string;
+      onlyGlobalRole?: string;
+      manager?: EntityManager;
+    } = {},
   ): Promise<CampusScope> {
-    const qb = this.memberships
+    const repo = manager
+      ? manager.getRepository(UserInstitutionRoleEntity)
+      : this.memberships;
+    const qb = repo
       .createQueryBuilder('uir')
       .select('DISTINCT uir.campus_id', 'campusId')
       .innerJoin(
@@ -179,8 +199,13 @@ export class PermissionsReader {
     slug: string,
     action: Exclude<PermissionAction, 'view'>,
     message: string,
+    manager?: EntityManager,
   ): Promise<void> {
-    if (await this.campusScope(user.userId, institutionId, slug, action)) {
+    if (
+      await this.campusScope(user.userId, institutionId, slug, action, {
+        manager,
+      })
+    ) {
       throw new ForbiddenException(message);
     }
   }

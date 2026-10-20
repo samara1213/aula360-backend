@@ -60,9 +60,15 @@ export function configureApp(app: INestApplication): void {
   );
 }
 
-/** Swagger en /api/docs (deshabilitado en producción). */
-export function setupSwagger(app: INestApplication): void {
+/**
+ * Swagger en /api/docs si SWAGGER_ENABLED (por defecto solo en desarrollo;
+ * la validación del entorno lo prohíbe en producción). Devuelve si se montó.
+ */
+export function setupSwagger(app: INestApplication): boolean {
+  const enabled = app.get(ConfigService).get<unknown>('SWAGGER_ENABLED');
+  if (String(enabled) !== 'true') return false;
   SwaggerModule.setup(`${API_PREFIX}/docs`, app, createOpenApiDocument(app), {
     swaggerOptions: { withCredentials: true },
   });
+  return true;
 }

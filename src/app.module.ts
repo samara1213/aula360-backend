@@ -4,7 +4,10 @@ import { APP_FILTER } from '@nestjs/core';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { HealthController } from './health.controller';
-import { DEFAULT_THROTTLE } from './common/constants/throttle';
+import {
+  DEFAULT_THROTTLE,
+  LOGIN_ACCOUNT_THROTTLE,
+} from './common/constants/throttle';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 import { validateEnv } from './config/env.validation';
 import { buildDataSourceOptions } from './database/typeorm.config';
@@ -32,10 +35,16 @@ import { StorageModule } from './storage/storage.module';
           url: config.getOrThrow<string>('DATABASE_URL'),
           ssl: String(config.get('DB_SSL')) !== 'false',
           ca: config.get<string>('DB_SSL_CA'),
+          pool: {
+            max: Number(config.get('DB_POOL_MAX') ?? 10),
+            connectionTimeoutMs: Number(
+              config.get('DB_POOL_CONNECTION_TIMEOUT_MS') ?? 10_000,
+            ),
+          },
         }),
     }),
     ThrottlerModule.forRoot({
-      throttlers: [DEFAULT_THROTTLE],
+      throttlers: [DEFAULT_THROTTLE, LOGIN_ACCOUNT_THROTTLE],
       // Solo para pruebas e2e (nunca en producción: lo bloquea la validación de entorno).
       skipIf: () => process.env.THROTTLE_DISABLED === 'true',
     }),

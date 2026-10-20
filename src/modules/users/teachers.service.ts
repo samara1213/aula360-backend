@@ -158,7 +158,7 @@ export class TeachersService {
     dto: UpdateTeacherDto,
   ): Promise<TeacherResponseDto> {
     const notice = await this.dataSource.transaction(async (manager) => {
-      const campusScope = await this.campusScope(scope, 'update');
+      const campusScope = await this.campusScope(scope, 'update', manager);
       const teacher = await this.findVisible(manager, scope, campusScope, id);
       const user = await lockUser(manager, teacher.userId);
       // Reglas de gestión siempre (aunque solo cambie el perfil).
@@ -227,12 +227,14 @@ export class TeachersService {
   private campusScope(
     scope: UsersScope,
     action: PermissionAction,
+    manager?: EntityManager,
   ): Promise<CampusScope> {
     return this.permissions.campusScope(
       scope.user.userId,
       scope.institutionId,
       TEACHERS_PERMISSION,
       action,
+      { manager },
     );
   }
 }

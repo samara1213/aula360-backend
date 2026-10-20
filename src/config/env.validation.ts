@@ -13,12 +13,25 @@ export const envValidationSchema: Joi.ObjectSchema<Record<string, unknown>> =
     PORT: Joi.number().port().default(3000),
     // Saltos de proxy inverso de confianza (0 = ninguno). Necesario para que el
     // rate limiting use la IP real del cliente detrás de un balanceador.
-    TRUST_PROXY: Joi.number().integer().min(0).max(10).default(0),
+    // En producción es obligatorio (también 0, si no hay proxy): olvidarlo
+    // detrás de un balanceador haría que todos compartan su IP (M3 de la fase 11e).
+    TRUST_PROXY: Joi.number()
+      .integer()
+      .min(0)
+      .max(10)
+      .when('NODE_ENV', {
+        is: 'production',
+        then: Joi.required(),
+        otherwise: Joi.optional().default(0),
+      }),
 
     DATABASE_URL: Joi.string()
       .uri({ scheme: ['postgres', 'postgresql'] })
       .required(),
-    DB_SSL: Joi.boolean().default(true),
+    // En producción siempre con SSL (B3 de la fase 11e).
+    DB_SSL: Joi.boolean()
+      .default(true)
+      .when('NODE_ENV', { is: 'production', then: Joi.valid(true) }),
     // Certificado CA de Supabase en PEM (se aceptan saltos de línea escritos como \n).
     // En producción es obligatorio: la conexión verifica el certificado del servidor.
     DB_SSL_CA: Joi.string()
@@ -28,6 +41,14 @@ export const envValidationSchema: Joi.ObjectSchema<Record<string, unknown>> =
         then: Joi.string().invalid('').required(),
         otherwise: Joi.optional(),
       }),
+    // Pool de conexiones de la app (pg): sin tope de espera, una petición
+    // colgada esperaría para siempre una conexión libre.
+    DB_POOL_MAX: Joi.number().integer().min(1).max(100).default(10),
+    DB_POOL_CONNECTION_TIMEOUT_MS: Joi.number()
+      .integer()
+      .min(1000)
+      .max(60_000)
+      .default(10_000),
     E2E_DB_MODE: Joi.string().valid('shared', 'isolated').optional(),
     DATABASE_URL_TEST: Joi.string()
       .uri({ scheme: ['postgres', 'postgresql'] })
@@ -66,6 +87,15 @@ export const envValidationSchema: Joi.ObjectSchema<Record<string, unknown>> =
     // Apaga el proceso que reintenta los borrados pendientes de Storage (por
     // ejemplo, en una instancia que no debe tocar Supabase). En e2e no corre.
     STORAGE_DELETIONS_DISABLED: Joi.boolean().default(false),
+
+    // /api/docs: por defecto solo en desarrollo; nunca en producción (B6 de la
+    // revisión de la fase 11d). No pide sesión: no activarlo en un entorno expuesto.
+    SWAGGER_ENABLED: Joi.boolean()
+      .empty('')
+      .default(
+        (parent: { NODE_ENV?: string }) => parent.NODE_ENV === 'development',
+      )
+      .when('NODE_ENV', { is: 'production', then: Joi.valid(false) }),
 
     THROTTLE_DISABLED: Joi.boolean()
       .default(false)

@@ -1,12 +1,15 @@
 import { join } from 'path';
 import { DataSourceOptions } from 'typeorm';
 import { ALL_ENTITIES } from './entities';
+import { SafeTypeOrmLogger } from './safe-typeorm-logger';
 
 interface DbParams {
   url: string;
   ssl: boolean;
   /** CA de Supabase (PEM). Si se indica, se verifica el certificado del servidor. */
   ca?: string;
+  /** Pool de pg: conexiones máximas y espera máxima por una libre (ms). */
+  pool?: { max: number; connectionTimeoutMs: number };
 }
 
 /** Con CA se verifica el certificado (obligatorio en producción); sin CA solo cifra. */
@@ -28,6 +31,7 @@ export function buildDataSourceOptions({
   url,
   ssl,
   ca,
+  pool,
 }: DbParams): DataSourceOptions {
   return {
     type: 'postgres',
@@ -39,6 +43,14 @@ export function buildDataSourceOptions({
     uuidExtension: 'uuid-ossp',
     synchronize: false,
     migrationsRun: false,
-    logging: ['error'],
+    // Sin parámetros en el log (M1 de la fase 11e).
+    logging: ['error', 'warn', 'migration'],
+    logger: new SafeTypeOrmLogger(),
+    ...(pool && {
+      extra: {
+        max: pool.max,
+        connectionTimeoutMillis: pool.connectionTimeoutMs,
+      },
+    }),
   };
 }

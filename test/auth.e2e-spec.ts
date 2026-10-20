@@ -79,6 +79,9 @@ describe('Auth (e2e)', () => {
       ]);
       const raw = JSON.stringify(res.body);
       expect(raw).not.toMatch(/passwordHash|password_hash|token/i);
+      // Sin la ruta interna del avatar en Storage (B6 de la fase 11e).
+      expect(res.body.user.hasAvatar).toBe(false);
+      expect(res.body.user).not.toHaveProperty('avatarPath');
     });
 
     it('acepta el email sin distinguir mayúsculas', async () => {
@@ -134,6 +137,16 @@ describe('Auth (e2e)', () => {
         .post('/api/auth/login')
         .send({ identifier: admin.email })
         .expect(400);
+    });
+
+    it('un formulario HTML (urlencoded) responde 415 (B4 de la fase 11e)', async () => {
+      const res = await request(server())
+        .post('/api/auth/login')
+        .type('form')
+        .send({ identifier: admin.email, password: TEST_PASSWORD })
+        .expect(415);
+      expect(res.body).toMatchObject({ statusCode: 415, message: 'Use JSON' });
+      expect(findCookie(res.headers, 'access_token')).toBeUndefined();
     });
 
     it('con varias instituciones no fija una activa', async () => {

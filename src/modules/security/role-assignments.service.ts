@@ -136,7 +136,7 @@ export class RoleAssignmentsService {
 
     // Alcance por sede primero: una sede fuera de su alcance responde 404
     // igual que una inexistente (no se revela cuáles existen).
-    const campusScope = await this.campusScope(scope, 'create');
+    const campusScope = await this.campusScope(scope, 'create', manager);
     if (campusScope) {
       if (!campusId) {
         throw new ForbiddenException(
@@ -265,7 +265,7 @@ export class RoleAssignmentsService {
       const assignment = await repo.findOne({
         where: { id, institutionId: scope.institutionId },
       });
-      const campusScope = await this.campusScope(scope, 'delete');
+      const campusScope = await this.campusScope(scope, 'delete', manager);
       if (
         !assignment ||
         (campusScope &&
@@ -377,12 +377,14 @@ export class RoleAssignmentsService {
       scope.institutionId,
       rolePerms,
       campusId ?? 'institution',
+      manager,
     );
   }
 
   private campusScope(
     scope: AssignmentScope,
     action: PermissionAction,
+    manager?: EntityManager,
   ): Promise<CampusScope> {
     if (scope.kind === 'system') return Promise.resolve(null);
     return this.permissions.campusScope(
@@ -390,6 +392,7 @@ export class RoleAssignmentsService {
       scope.institutionId,
       scope.permission ?? ASSIGNMENT_PERMISSION,
       action,
+      { manager },
     );
   }
 

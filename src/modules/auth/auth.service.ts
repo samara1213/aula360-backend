@@ -223,6 +223,7 @@ export class AuthService implements OnModuleInit {
       if (!result.affected) return 'reused' as const;
 
       const institutionId = await this.resolveInstitutionOnRefresh(
+        manager,
         user.id,
         rawAccessToken,
       );
@@ -241,10 +242,11 @@ export class AuthService implements OnModuleInit {
   }
 
   private async resolveInstitutionOnRefresh(
+    manager: EntityManager,
     userId: string,
     rawAccessToken: string | undefined,
   ): Promise<string | null> {
-    const institutions = await this.getMemberships(userId);
+    const institutions = await this.getMemberships(userId, manager);
     if (rawAccessToken) {
       try {
         const previous = await this.tokens.verifyAccessToken(rawAccessToken, {
@@ -323,9 +325,10 @@ export class AuthService implements OnModuleInit {
    * administrador podría poner un correo suyo y tomar la cuenta.
    */
   forgotPassword(email: string): void {
-    this.processForgotPassword(email).catch((error: Error) =>
+    // Solo el código: el mensaje de SMTP puede traer la dirección (B5 de la fase 11e).
+    this.processForgotPassword(email).catch((error: unknown) =>
       this.logger.error(
-        `Error en la recuperación de contraseña: ${error.message}`,
+        `Error en la recuperación de contraseña: ${(error as { code?: string }).code ?? (error as Error).name}`,
       ),
     );
   }
@@ -465,11 +468,18 @@ export class AuthService implements OnModuleInit {
       .update({ userId, revokedAt: IsNull() }, { revokedAt: new Date() });
   }
 
-  /** Instituciones activas del usuario con los nombres de sus roles en cada una. */
+  /**
+   * Instituciones activas del usuario con los nombres de sus roles en cada una.
+   * Dentro de una transacción, con su manager (sin pedir otra conexión).
+   */
   private async getMemberships(
     userId: string,
+    manager?: EntityManager,
   ): Promise<InstitutionMembershipDto[]> {
-    const rows = await this.memberships
+    const repo = manager
+      ? manager.getRepository(UserInstitutionRoleEntity)
+      : this.memberships;
+    const rows = await repo
       .createQueryBuilder('uir')
       .innerJoin('uir.institution', 'i', 'i.is_active = true')
       .innerJoin('uir.role', 'r')
@@ -511,7 +521,7 @@ export class AuthService implements OnModuleInit {
         email: user.email,
         emailVerified: user.emailVerifiedAt !== null,
         pendingEmail: pending.get(user.id) ?? null,
-        avatarPath: user.avatarPath,
+        hasAvatar: user.avatarPath !== null,
         mustChangePassword: user.mustChangePassword,
       },
       activeInstitutionId,

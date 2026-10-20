@@ -91,6 +91,7 @@ function setup({
     [UserEntity, usersRepo],
     [RefreshTokenEntity, refreshRepo],
     [PasswordResetTokenEntity, resetRepo],
+    [UserInstitutionRoleEntity, membershipsRepo],
   ]);
   const manager = { getRepository: jest.fn((e: unknown) => repos.get(e)) };
   const dataSource = {
@@ -111,7 +112,7 @@ function setup({
     membershipsRepo as unknown as Repository<UserInstitutionRoleEntity>,
     refreshRepo as unknown as Repository<RefreshTokenEntity>,
   );
-  return { service, usersRepo, refreshRepo, resetRepo, tokens, mail };
+  return { service, usersRepo, refreshRepo, resetRepo, tokens, mail, manager };
 }
 
 /** Espera a que terminen las promesas pendientes (trabajo en segundo plano). */
@@ -264,7 +265,7 @@ describe('AuthService', () => {
     });
 
     it('descarta la institución del token anterior si ya no pertenece a ella', async () => {
-      const { service, refreshRepo, tokens } = setup({
+      const { service, refreshRepo, tokens, manager } = setup({
         memberships: [
           { id: 'a', name: 'A', role: 'TEACHER' },
           { id: 'b', name: 'B', role: 'TEACHER' },
@@ -282,6 +283,10 @@ describe('AuthService', () => {
       });
 
       await service.refresh('raw', 'old-jwt');
+      // Membresías leídas en la conexión de la transacción (M2 de la fase 11e).
+      expect(manager.getRepository).toHaveBeenCalledWith(
+        UserInstitutionRoleEntity,
+      );
       expect(tokens.signAccessToken).toHaveBeenCalledWith({
         sub: 'u1',
         institutionId: null,

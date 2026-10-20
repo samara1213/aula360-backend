@@ -167,6 +167,40 @@ describe('PermissionsReader', () => {
     });
   });
 
+  describe('dentro de una transacción (M2 de la fase 11e)', () => {
+    it('campusScope y effective usan el manager recibido, no otra conexión', async () => {
+      const txScopeQb = qbMock();
+      const txPermQb = qbMock();
+      txScopeQb.getRawMany.mockResolvedValue([{ campusId: null }]);
+      txPermQb.getRawMany.mockResolvedValue([]);
+      const manager = {
+        getRepository: jest.fn((entity: unknown) => ({
+          createQueryBuilder: () =>
+            entity === UserInstitutionRoleEntity ? txScopeQb : txPermQb,
+        })),
+      };
+      await expect(
+        reader.campusScope('user-1', 'inst-A', 'academic.courses', 'view', {
+          manager: manager as never,
+        }),
+      ).resolves.toBeNull();
+      await reader.effective(
+        'user-1',
+        'inst-A',
+        'institution',
+        manager as never,
+      );
+      expect(manager.getRepository).toHaveBeenCalledWith(
+        UserInstitutionRoleEntity,
+      );
+      expect(manager.getRepository).toHaveBeenCalledWith(
+        RoleMenuPermissionEntity,
+      );
+      expect(scopeQb.getRawMany).not.toHaveBeenCalled();
+      expect(permQb.getRawMany).not.toHaveBeenCalled();
+    });
+  });
+
   describe('campusScope', () => {
     it('null si alguna asignación con el permiso es de toda la institución', async () => {
       scopeQb.getRawMany.mockResolvedValue([

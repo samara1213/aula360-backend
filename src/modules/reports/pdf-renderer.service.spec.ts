@@ -2,7 +2,11 @@ import { ServiceUnavailableException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createServer, Server } from 'http';
 import { AddressInfo, Socket } from 'net';
-import { PdfRendererService } from './pdf-renderer.service';
+import {
+  PdfRendererService,
+  RENDER_CSP,
+  withContentSecurityPolicy,
+} from './pdf-renderer.service';
 
 /** Con Chromium real: es la barrera frente a plantillas con HTML ajeno. */
 describe('PdfRendererService (Chromium real)', () => {
@@ -33,6 +37,17 @@ describe('PdfRendererService (Chromium real)', () => {
   afterAll(async () => {
     await renderer.onModuleDestroy();
     await new Promise((resolve) => server.close(resolve));
+  });
+
+  it('la CSP del servidor va antes que todo el HTML de la plantilla (B1 de la fase 11e)', () => {
+    const meta = `<meta http-equiv="Content-Security-Policy" content="${RENDER_CSP}">`;
+    expect(withContentSecurityPolicy('<!DOCTYPE html><html><head>')).toBe(
+      `<!DOCTYPE html>${meta}<html><head>`,
+    );
+    // Un comentario o un <head> de la plantilla no quedan antes de la política.
+    expect(withContentSecurityPolicy('<!-- <head> --><p>x</p>')).toBe(
+      `${meta}<!-- <head> --><p>x</p>`,
+    );
   });
 
   it('genera un PDF', async () => {

@@ -175,7 +175,7 @@ export class RolesService {
         }
       }
       // Lo que se otorga también debe estar dentro de los permisos de quien actúa.
-      await this.assertWithinCeiling(scope, requested);
+      await this.assertWithinCeiling(scope, requested, manager);
       await this.assertKeepsSelfManagement(manager, scope, role, requested);
 
       const permRepo = manager.getRepository(RoleMenuPermissionEntity);
@@ -226,11 +226,11 @@ export class RolesService {
           'Los roles globales solo los gestiona el SUPER_ADMIN',
         );
       }
-      await this.requireInstitutionWide(scope, action);
+      await this.requireInstitutionWide(scope, action, manager);
       const current = await manager
         .getRepository(RoleMenuPermissionEntity)
         .find({ where: { roleId: role.id } });
-      await this.assertWithinCeiling(scope, current);
+      await this.assertWithinCeiling(scope, current, manager);
     }
     return role;
   }
@@ -308,6 +308,7 @@ export class RolesService {
   private requireInstitutionWide(
     scope: Extract<RoleScope, { kind: 'institution' }>,
     action: WriteAction,
+    manager?: EntityManager,
   ): Promise<void> {
     return this.permissions.requireInstitutionWide(
       scope.user,
@@ -315,6 +316,7 @@ export class RolesService {
       ROLE_PERMISSION,
       action,
       'Su acceso está limitado a una sede: no puede gestionar roles',
+      manager,
     );
   }
 
@@ -322,6 +324,7 @@ export class RolesService {
   private async assertWithinCeiling(
     scope: RoleScope,
     perms: readonly MenuPermission[],
+    manager?: EntityManager,
   ): Promise<void> {
     if (scope.kind === 'institution') {
       await this.permissions.assertWithinCeiling(
@@ -329,6 +332,7 @@ export class RolesService {
         scope.institutionId,
         perms,
         'institution',
+        manager,
       );
     }
   }

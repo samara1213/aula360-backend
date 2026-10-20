@@ -1,5 +1,37 @@
+import { ExecutionContext, SetMetadata } from '@nestjs/common';
+import type { ThrottlerOptions } from '@nestjs/throttler';
+import { createHash } from 'crypto';
+
 /** Límite global: 100 peticiones por minuto por IP. */
 export const DEFAULT_THROTTLE = { ttl: 60_000, limit: 100 };
+
+const ACCOUNT_THROTTLE_KEY = 'accountThrottle';
+
+/**
+ * Login: además del límite por IP, 10 intentos cada 15 minutos por cuenta
+ * (el identificador normalizado, guardado como hash), para que un ataque
+ * repartido entre muchas IP no pruebe contraseñas sin freno (M3 de la fase
+ * 11e). Solo cuenta en las rutas marcadas con @AccountThrottle().
+ */
+export const LOGIN_ACCOUNT_THROTTLE: ThrottlerOptions = {
+  name: 'login-account',
+  ttl: 15 * 60_000,
+  limit: 10,
+  getTracker: (req: Record<string, unknown>) => {
+    const identifier = (req.body as { identifier?: unknown } | undefined)
+      ?.identifier;
+    const normalized =
+      typeof identifier === 'string' ? identifier.trim().toLowerCase() : '';
+    return `login:${createHash('sha256').update(normalized).digest('hex')}`;
+  },
+  // Este skipIf reemplaza al del módulo: repite el apagado de las e2e.
+  skipIf: (context: ExecutionContext) =>
+    process.env.THROTTLE_DISABLED === 'true' ||
+    !Reflect.getMetadata(ACCOUNT_THROTTLE_KEY, context.getHandler()),
+};
+
+/** Aplica LOGIN_ACCOUNT_THROTTLE a la ruta. */
+export const AccountThrottle = () => SetMetadata(ACCOUNT_THROTTLE_KEY, true);
 
 /**
  * Límite estricto para login y recuperación de contraseña.

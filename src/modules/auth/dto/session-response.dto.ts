@@ -33,13 +33,11 @@ export class SessionUserDto {
   })
   pendingEmail: string | null;
 
-  @ApiPropertyOptional({
+  @ApiProperty({
     description:
-      'null si no tiene avatar; la imagen se pide con GET /api/users/me/avatar',
-    type: String,
-    nullable: true,
+      'Si tiene avatar; la imagen se pide con GET /api/users/me/avatar (URL firmada)',
   })
-  avatarPath: string | null;
+  hasAvatar: boolean;
 
   @ApiProperty({ description: 'Debe cambiar la contraseña antes de continuar' })
   mustChangePassword: boolean;

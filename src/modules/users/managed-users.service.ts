@@ -598,7 +598,7 @@ export class ManagedUsersService implements OnModuleInit {
     action: PermissionAction,
     { lock = false }: { lock?: boolean } = {},
   ): Promise<{ user: UserEntity; campusScope: CampusScope }> {
-    const campusScope = await this.campusScope(scope, action);
+    const campusScope = await this.campusScope(scope, action, manager);
     const qb = this.membersQuery(manager, scope, campusScope).andWhere(
       'u.id = :id',
       { id },
@@ -659,6 +659,7 @@ export class ManagedUsersService implements OnModuleInit {
           scope.institutionId,
           rolePerms,
           campusId ?? 'institution',
+          manager,
         );
       } catch (error) {
         // Mensaje genérico: no revela en qué sede ni con qué rol está.
@@ -881,6 +882,7 @@ export class ManagedUsersService implements OnModuleInit {
   private campusScope(
     scope: UsersScope,
     action: PermissionAction,
+    manager?: EntityManager,
   ): Promise<CampusScope> {
     if (scope.kind === 'system') return Promise.resolve(null);
     return this.permissions.campusScope(
@@ -888,6 +890,7 @@ export class ManagedUsersService implements OnModuleInit {
       scope.institutionId,
       scope.permission ?? USERS_PERMISSION,
       action,
+      { manager },
     );
   }
 
@@ -963,9 +966,10 @@ export class ManagedUsersService implements OnModuleInit {
             ? `<p>Confirma también tu correo (vence en 24 horas): <a href="${verifyLink}">confirmar correo</a></p>`
             : ''),
       })
-      .catch((error: Error) =>
+      // Solo el código: el mensaje de SMTP puede traer la dirección (B5 de la fase 11e).
+      .catch((error: unknown) =>
         this.logger.error(
-          `No se pudo enviar la contraseña temporal: ${error.message}`,
+          `No se pudo enviar la contraseña temporal: ${(error as { code?: string }).code ?? 'Error'}`,
         ),
       );
   }

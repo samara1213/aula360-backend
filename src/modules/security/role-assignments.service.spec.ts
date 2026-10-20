@@ -259,6 +259,7 @@ describe('RoleAssignmentsService', () => {
         'inst-A',
         [],
         'c1',
+        expect.anything(), // el manager de la transacción
       );
     });
 
@@ -269,6 +270,7 @@ describe('RoleAssignmentsService', () => {
         'inst-A',
         [],
         'institution',
+        expect.anything(), // el manager de la transacción
       );
     });
 

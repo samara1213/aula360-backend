@@ -338,12 +338,14 @@ describe('ManagedUsersService', () => {
         'inst-A',
         [],
         'institution',
+        manager,
       );
       expect(permissions.assertWithinCeiling).toHaveBeenCalledWith(
         admin,
         'inst-A',
         [],
         'campus-1',
+        manager,
       );
     });
 
@@ -454,6 +456,7 @@ describe('ManagedUsersService', () => {
         'inst-A',
         'people.students',
         'view',
+        { manager },
       );
     });
 
@@ -575,6 +578,7 @@ describe('ManagedUsersService', () => {
         'inst-A',
         'security.users',
         'update',
+        { manager },
       );
     });
 
@@ -608,6 +612,7 @@ describe('ManagedUsersService', () => {
         'inst-A',
         'people.teachers',
         'update',
+        { manager },
       );
     });
   });

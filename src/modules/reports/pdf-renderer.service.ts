@@ -17,6 +17,26 @@ const MAX_QUEUED = 50;
 const MAX_PAGES = 20;
 export const MAX_PDF_BYTES = 10 * 1024 * 1024;
 
+/**
+ * Política que la plantilla no puede relajar (las CSP se suman): solo
+ * imágenes y fuentes data: y estilos en línea (B1 de la fase 11e).
+ */
+export const RENDER_CSP =
+  "default-src 'none'; img-src data:; font-src data:; style-src 'unsafe-inline'";
+const CSP_META = `<meta http-equiv="Content-Security-Policy" content="${RENDER_CSP}">`;
+
+/**
+ * Pone la CSP antes que todo el HTML de la plantilla (después del doctype,
+ * para no pasar a modo quirks). El parser la ubica en el <head> que crea, y
+ * ningún comentario ni etiqueta de la plantilla puede quedar antes.
+ */
+export function withContentSecurityPolicy(html: string): string {
+  const doctype = /^\uFEFF?\s*<!doctype[^>]*>/i.exec(html);
+  return doctype
+    ? doctype[0] + CSP_META + html.slice(doctype[0].length)
+    : CSP_META + html;
+}
+
 class StepTimeoutError extends Error {}
 
 /**
@@ -24,6 +44,7 @@ class StepTimeoutError extends Error {}
  * HTML ajeno:
  * - sin JavaScript y en modo sin conexión; toda petición se aborta salvo los
  *   data: (sin red, sin file://, sin <meta refresh>); el logo va embebido;
+ * - una CSP del servidor (default-src 'none') delante de la plantilla;
  * - sin resolución DNS y con un proxy inexistente, también para loopback
  *   (hallazgo M4 de la fase 10a);
  * - un contexto de navegador aislado por render; máximo 20 páginas y 10 MB;
@@ -81,7 +102,7 @@ export class PdfRendererService implements OnModuleDestroy {
         handled.catch(() => undefined);
       });
       await this.step(
-        page.setContent(html, {
+        page.setContent(withContentSecurityPolicy(html), {
           waitUntil: 'load',
           timeout: this.stepTimeoutMs,
         }),

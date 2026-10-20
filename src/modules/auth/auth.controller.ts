@@ -7,6 +7,7 @@ import {
   Post,
   Req,
   Res,
+  UnauthorizedException,
 } from '@nestjs/common';
 import {
   ApiBadRequestResponse,
@@ -24,6 +25,7 @@ import { Request, Response } from 'express';
 import {
   CURRENT_PASSWORD_THROTTLE,
   SENSITIVE_ACTION_THROTTLE,
+  AccountThrottle,
   STRICT_AUTH_THROTTLE,
 } from '../../common/constants/throttle';
 import { AllowPendingPasswordChange } from '../../common/decorators/allow-pending-password-change.decorator';
@@ -73,6 +75,7 @@ export class AuthController {
 
   @Public()
   @Throttle(STRICT_AUTH_THROTTLE)
+  @AccountThrottle()
   @Post('login')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
@@ -84,7 +87,10 @@ export class AuthController {
   @ApiUnauthorizedResponse({
     description: 'Credenciales inválidas (mensaje genérico)',
   })
-  @ApiTooManyRequestsResponse({ description: 'Demasiados intentos' })
+  @ApiTooManyRequestsResponse({
+    description:
+      'Demasiados intentos: 5 por minuto por IP y 10 cada 15 minutos por cuenta',
+  })
   async login(
     @Body() dto: LoginDto,
     @Res({ passthrough: true }) res: Response,
@@ -147,7 +153,11 @@ export class AuthController {
       );
       setAuthCookies(res, tokens, this.cookieSettings);
     } catch (error) {
-      clearAuthCookies(res, this.tokens.secureCookies);
+      // Solo una sesión inválida borra las cookies; un fallo del servidor
+      // (p. ej. sin conexiones libres) no cierra la sesión (M2 de la fase 11e).
+      if (error instanceof UnauthorizedException) {
+        clearAuthCookies(res, this.tokens.secureCookies);
+      }
       throw error;
     }
   }

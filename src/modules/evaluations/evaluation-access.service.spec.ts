@@ -129,4 +129,28 @@ describe('EvaluationAccessService', () => {
       expect.objectContaining({ lock: { mode: 'pessimistic_read' } }),
     );
   });
+
+  it('dentro de una transacción, los alcances van por su manager y uno tras otro (M2 de la fase 11e)', async () => {
+    let running = 0;
+    let maxRunning = 0;
+    permissions.campusScope.mockImplementation(async () => {
+      maxRunning = Math.max(maxRunning, ++running);
+      await new Promise((resolve) => setImmediate(resolve));
+      running--;
+      return null;
+    });
+    await service.resolve(
+      user,
+      'evaluations.evaluations',
+      'create',
+      manager as never,
+    );
+    expect(permissions.campusScope).toHaveBeenCalledTimes(3);
+    for (const call of permissions.campusScope.mock.calls) {
+      expect((call as unknown[])[4]).toEqual(
+        expect.objectContaining({ manager }),
+      );
+    }
+    expect(maxRunning).toBe(1);
+  });
 });

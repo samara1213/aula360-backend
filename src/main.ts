@@ -9,9 +9,7 @@ async function bootstrap() {
   configureApp(app);
 
   const config = app.get(ConfigService);
-  if (config.get<string>('NODE_ENV') !== 'production') {
-    setupSwagger(app);
-  }
+  setupSwagger(app);
 
   const port = config.get<number>('PORT') ?? 3000;
   await app.listen(port);

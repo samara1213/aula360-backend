@@ -130,14 +130,18 @@ describe('Storage: avatar y logo (e2e)', () => {
       expect(second.body.avatarPath).toMatch(/\.jpg$/);
       expect(ctx.storage.has('avatars', firstPath)).toBe(false);
 
+      // La sesión dice si hay avatar, sin la ruta de Storage (B6 de la fase 11e).
       const me = await adminA.get('/api/auth/me').expect(200);
-      expect(me.body.user.avatarPath).toBe(second.body.avatarPath);
+      expect(me.body.user.hasAvatar).toBe(true);
+      expect(me.body.user).not.toHaveProperty('avatarPath');
 
       await adminA.delete('/api/users/me/avatar').expect(204);
       expect(ctx.storage.has('avatars', second.body.avatarPath as string)).toBe(
         false,
       );
       await adminA.get('/api/users/me/avatar').expect(404);
+      const after = await adminA.get('/api/auth/me').expect(200);
+      expect(after.body.user.hasAvatar).toBe(false);
     });
 
     it('cada usuario solo ve su propio avatar', async () => {

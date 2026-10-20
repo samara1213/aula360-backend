@@ -157,6 +157,7 @@ describe('RolesService', () => {
         'security.roles',
         'create',
         expect.any(String),
+        undefined,
       );
       expect(result.permissions).toEqual([]);
     });
@@ -187,6 +188,7 @@ describe('RolesService', () => {
         'inst-A',
         held,
         'institution',
+        expect.anything(), // el manager de la transacción
       );
     });
   });
@@ -210,6 +212,7 @@ describe('RolesService', () => {
         'inst-A',
         granted,
         'institution',
+        expect.anything(), // el manager de la transacción
       );
       expect(permRepo.delete).toHaveBeenCalledWith({ roleId: 'role-1' });
       expect(permRepo.insert).toHaveBeenCalledWith([

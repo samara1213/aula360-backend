@@ -84,6 +84,26 @@ describe('report-template.engine', () => {
       /pistas de conexión/,
     ],
     ['@import', '<style>@import "x.css";</style>', /@import/],
+    [
+      'URL partida con un comentario de Handlebars (B1 de la fase 11e)',
+      '<img src="fi{{!x}}le:///etc/passwd">',
+      /URLs absolutas/,
+    ],
+    [
+      'pista de conexión partida con comentarios (B1)',
+      '<link rel="pre{{!}}connect" href="/{{!}}/x.tld">',
+      /pistas de conexión|URLs absolutas/,
+    ],
+    [
+      'esquema escondido con entidades HTML (B1)',
+      '<img src="file&colon;///etc/passwd">',
+      /URLs absolutas/,
+    ],
+    [
+      'barras escondidas con entidades numéricas (B1)',
+      '<img src="&#47;&#x2f;x.tld/a.png">',
+      /URLs absolutas/,
+    ],
     ['error de sintaxis', '{{#each subjects}}<p>', /inválida/],
   ])('400: %s', (_c, source, message) => {
     expect(() => compileTemplate(source)).toThrow(BadRequestException);

@@ -65,15 +65,29 @@ export class EvaluationAccessService {
         lock: { mode: 'pessimistic_read' },
       });
     }
+    // Con manager, en la conexión de la transacción y una tras otra (no se
+    // pide otra conexión mientras la transacción retiene la suya: M2 de la
+    // fase 11e). Sin transacción, en paralelo.
     const scope = (s: string, a: PermissionAction, role: object) =>
-      this.permissions.campusScope(user.userId, institutionId, s, a, role);
-    const [byOtherRoles, managesLoad, teacherScope] = await Promise.all([
-      scope(slug, action, { excludeGlobalRole: 'TEACHER' }),
-      scope(TEACHER_ASSIGNMENTS_PERMISSION, 'update', {
-        excludeGlobalRole: 'TEACHER',
-      }),
-      scope(slug, action, { onlyGlobalRole: 'TEACHER' }),
-    ]);
+      this.permissions.campusScope(user.userId, institutionId, s, a, {
+        ...role,
+        manager,
+      });
+    const queries: (() => Promise<CampusScope>)[] = [
+      () => scope(slug, action, { excludeGlobalRole: 'TEACHER' }),
+      () =>
+        scope(TEACHER_ASSIGNMENTS_PERMISSION, 'update', {
+          excludeGlobalRole: 'TEACHER',
+        }),
+      () => scope(slug, action, { onlyGlobalRole: 'TEACHER' }),
+    ];
+    const results: CampusScope[] = [];
+    if (manager) {
+      for (const query of queries) results.push(await query());
+    } else {
+      results.push(...(await Promise.all(queries.map((query) => query()))));
+    }
+    const [byOtherRoles, managesLoad, teacherScope] = results;
     let teacherId: string | null = null;
     if (teacherScope === null || teacherScope.length) {
       const teacher = await (manager ?? this.dataSource.manager)

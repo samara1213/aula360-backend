@@ -10,6 +10,36 @@ function clientErrorStatus(err: unknown): number | null {
     : null;
 }
 
+/** Mismo formato que AllExceptionsFilter (estos middlewares corren antes de Nest). */
+function sendError(
+  req: Request,
+  res: Response,
+  status: number,
+  message: string,
+): void {
+  res.status(status).json({
+    statusCode: status,
+    message,
+    error: HttpStatus[status] ?? 'Error',
+    path: req.originalUrl,
+    timestamp: new Date().toISOString(),
+  });
+}
+
+/**
+ * La API solo recibe JSON (y multipart en las subidas, con Multer): un
+ * formulario HTML de otro sitio responde 415 sin llegar a los handlers (B4 de
+ * la fase 11e). Se llama urlencodedParser a propósito: Nest no registra su
+ * propio parser de formularios si ya hay un middleware con ese nombre.
+ */
+function urlencodedParser(req: Request, res: Response, next: NextFunction) {
+  if (req.is('application/x-www-form-urlencoded')) {
+    sendError(req, res, HttpStatus.UNSUPPORTED_MEDIA_TYPE, 'Use JSON');
+    return;
+  }
+  next();
+}
+
 /**
  * Parsers de cuerpo registrados por la app (Nest no añade los suyos si ya existen)
  * seguidos de un manejador de errores: los errores de body-parser ocurren antes de
@@ -23,17 +53,11 @@ export function bodyParserMiddlewares(): [
 ] {
   return [
     express.json(),
-    express.urlencoded({ extended: true }),
+    urlencodedParser,
     (err: unknown, req: Request, res: Response, next: NextFunction): void => {
       const status = clientErrorStatus(err);
       if (!status) return next(err);
-      res.status(status).json({
-        statusCode: status,
-        message: 'Solicitud inválida',
-        error: HttpStatus[status] ?? 'Error',
-        path: req.originalUrl,
-        timestamp: new Date().toISOString(),
-      });
+      sendError(req, res, status, 'Solicitud inválida');
     },
   ];
 }

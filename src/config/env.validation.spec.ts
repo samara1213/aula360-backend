@@ -17,6 +17,7 @@ const prodEnv = {
   CORS_ORIGINS: 'https://app.aula360.co',
   FRONTEND_URL: 'https://app.aula360.co',
   SMTP_HOST: 'smtp.x.co',
+  TRUST_PROXY: '1',
   DB_SSL_CA: '-----BEGIN CERTIFICATE-----x-----END CERTIFICATE-----',
 };
 
@@ -27,6 +28,32 @@ describe('validateEnv', () => {
     expect(result.DB_SSL).toBe(true);
     expect(result.TRUST_PROXY).toBe(0);
     expect(result.JWT_ACCESS_EXPIRES_IN).toBe(900);
+  });
+
+  it('Swagger: por defecto solo en desarrollo; se puede apagar', () => {
+    expect(validateEnv({ ...validEnv }).SWAGGER_ENABLED).toBe(true);
+    expect(
+      validateEnv({ ...validEnv, SWAGGER_ENABLED: 'false' }).SWAGGER_ENABLED,
+    ).toBe(false);
+    expect(validateEnv({ ...validEnv, NODE_ENV: 'test' }).SWAGGER_ENABLED).toBe(
+      false,
+    );
+    // Vacío (como en .env.example) = sin definir.
+    expect(
+      validateEnv({ ...validEnv, SWAGGER_ENABLED: '' }).SWAGGER_ENABLED,
+    ).toBe(true);
+  });
+
+  it('pool de la base: valores por defecto y límites', () => {
+    const result = validateEnv({ ...validEnv });
+    expect(result.DB_POOL_MAX).toBe(10);
+    expect(result.DB_POOL_CONNECTION_TIMEOUT_MS).toBe(10_000);
+    expect(() => validateEnv({ ...validEnv, DB_POOL_MAX: '0' })).toThrow(
+      /DB_POOL_MAX/,
+    );
+    expect(() =>
+      validateEnv({ ...validEnv, DB_POOL_CONNECTION_TIMEOUT_MS: '0' }),
+    ).toThrow(/DB_POOL_CONNECTION_TIMEOUT_MS/);
   });
 
   it('convierte números y booleanos recibidos como texto', () => {
@@ -88,6 +115,26 @@ describe('validateEnv', () => {
       expect(() =>
         validateEnv({ ...prodEnv, FRONTEND_URL: 'http://app.aula360.co' }),
       ).toThrow(/FRONTEND_URL/);
+    });
+
+    it('exige TRUST_PROXY explícito (también 0)', () => {
+      expect(() => validateEnv({ ...prodEnv, TRUST_PROXY: undefined })).toThrow(
+        /TRUST_PROXY/,
+      );
+      expect(validateEnv({ ...prodEnv, TRUST_PROXY: '0' }).TRUST_PROXY).toBe(0);
+    });
+
+    it('no permite activar Swagger y por defecto lo apaga', () => {
+      expect(validateEnv({ ...prodEnv }).SWAGGER_ENABLED).toBe(false);
+      expect(() =>
+        validateEnv({ ...prodEnv, SWAGGER_ENABLED: 'true' }),
+      ).toThrow(/SWAGGER_ENABLED/);
+    });
+
+    it('no permite la base sin SSL', () => {
+      expect(() => validateEnv({ ...prodEnv, DB_SSL: 'false' })).toThrow(
+        /DB_SSL/,
+      );
     });
 
     it('no permite desactivar el rate limiting', () => {

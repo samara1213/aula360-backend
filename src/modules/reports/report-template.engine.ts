@@ -100,6 +100,40 @@ const NETWORK_HINTS: [RegExp, string][] = [
   ],
 ];
 
+/** Decodifica las entidades que sirven para esconder una URL (&#47;, &colon;...). */
+function decodeEntities(html: string): string {
+  const named: Record<string, string> = {
+    colon: ':',
+    sol: '/',
+    period: '.',
+    tab: '\t',
+    newline: '\n',
+    amp: '&',
+  };
+  return html.replace(
+    /&(?:#(\d+)|#x([0-9a-f]+)|([a-z]+));?/gi,
+    (match, dec?: string, hex?: string, name?: string) => {
+      if (dec) return String.fromCodePoint(Number(dec) % 0x110000);
+      if (hex) return String.fromCodePoint(parseInt(hex, 16) % 0x110000);
+      return named[name!.toLowerCase()] ?? match;
+    },
+  );
+}
+
+/**
+ * Las pistas de red también sobre el HTML que produce la plantilla con datos
+ * de ejemplo: así no se esconden partiendo una URL con comentarios de
+ * Handlebars ni con entidades HTML (B1 de la fase 11e).
+ */
+function checkRenderedHtml(html: string): void {
+  const text = decodeEntities(html);
+  for (const [pattern, message] of NETWORK_HINTS) {
+    if (pattern.test(text)) {
+      throw new BadRequestException(`Plantilla inválida: ${message}`);
+    }
+  }
+}
+
 type HbsNode = hbs.AST.Node & Record<string, unknown>;
 
 /** 400 con el primer problema del árbol de la plantilla. */
@@ -226,6 +260,7 @@ export function compileTemplate(source: string): CompiledTemplate {
   }
   validateAst(program);
   let template: HandlebarsTemplateDelegate<ReportCardTemplateData>;
+  let sample: string;
   try {
     template = engine.compile<ReportCardTemplateData>(source, {
       strict: false,
@@ -238,12 +273,13 @@ export function compileTemplate(source: string): CompiledTemplate {
       },
     });
     // Compila de verdad (Handlebars compila al primer uso) con datos de ejemplo.
-    template(SAMPLE_DATA);
+    sample = template(SAMPLE_DATA);
   } catch (error) {
     throw new BadRequestException(
       `Plantilla inválida: ${(error as Error).message.split('\n')[0]}`,
     );
   }
+  checkRenderedHtml(sample);
   return (data) => {
     const html = template(data, {
       allowProtoPropertiesByDefault: false,
