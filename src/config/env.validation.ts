@@ -54,6 +54,9 @@ export const envValidationSchema: Joi.ObjectSchema<Record<string, unknown>> =
       .uri({ scheme: ['postgres', 'postgresql'] })
       .allow('')
       .optional(),
+    // SSL de DATABASE_URL_TEST (en modo isolated reemplaza a DB_SSL): un
+    // Postgres local no usa SSL aunque DB_SSL=true sea el de Supabase.
+    DB_SSL_TEST: Joi.boolean().empty('').optional(),
 
     // Lista separada por comas. Nunca '*' (las cookies requieren origen explícito).
     // En producción solo https.

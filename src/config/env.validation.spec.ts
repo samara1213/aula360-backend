@@ -56,6 +56,19 @@ describe('validateEnv', () => {
     ).toThrow(/DB_POOL_CONNECTION_TIMEOUT_MS/);
   });
 
+  it('DB_SSL_TEST: opcional (vacío = sin definir) y booleano', () => {
+    expect(validateEnv({ ...validEnv }).DB_SSL_TEST).toBeUndefined();
+    expect(validateEnv({ ...validEnv, DB_SSL_TEST: '' }).DB_SSL_TEST).toBe(
+      undefined,
+    );
+    expect(validateEnv({ ...validEnv, DB_SSL_TEST: 'false' }).DB_SSL_TEST).toBe(
+      false,
+    );
+    expect(() => validateEnv({ ...validEnv, DB_SSL_TEST: 'no' })).toThrow(
+      /DB_SSL_TEST/,
+    );
+  });
+
   it('convierte números y booleanos recibidos como texto', () => {
     const result = validateEnv({ ...validEnv, PORT: '4000', DB_SSL: 'false' });
     expect(result.PORT).toBe(4000);
