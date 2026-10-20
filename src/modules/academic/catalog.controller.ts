@@ -14,7 +14,6 @@ import {
 import {
   ApiBadRequestResponse,
   ApiConflictResponse,
-  ApiCookieAuth,
   ApiCreatedResponse,
   ApiForbiddenResponse,
   ApiNoContentResponse,
@@ -46,7 +45,6 @@ const INSTITUTION_WIDE =
   'Requiere alcance en toda la institución (quien está limitado a sedes solo consulta).';
 
 @ApiTags('grades')
-@ApiCookieAuth('access_token')
 @ApiForbiddenResponse({ description: 'Sin permiso para esta acción' })
 @Controller('grades')
 export class GradesController {
@@ -118,7 +116,6 @@ export class GradesController {
 }
 
 @ApiTags('subjects')
-@ApiCookieAuth('access_token')
 @ApiForbiddenResponse({ description: 'Sin permiso para esta acción' })
 @Controller('subjects')
 export class SubjectsController {

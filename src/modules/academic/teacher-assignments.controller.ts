@@ -14,7 +14,6 @@ import {
 import {
   ApiBadRequestResponse,
   ApiConflictResponse,
-  ApiCookieAuth,
   ApiCreatedResponse,
   ApiForbiddenResponse,
   ApiNoContentResponse,
@@ -42,7 +41,6 @@ const RULES =
   'El docente debe estar activo y tener el rol TEACHER en la sede del curso o en toda la institución; el año lectivo del curso, activo. Quien está limitado a sedes solo gestiona la carga de los cursos de esas sedes.';
 
 @ApiTags('teacher-assignments')
-@ApiCookieAuth('access_token')
 @ApiForbiddenResponse({ description: 'Sin permiso para esta acción' })
 @Controller('teacher-assignments')
 export class TeacherAssignmentsController {

@@ -14,13 +14,20 @@ export class RoleResponseDto {
   })
   institutionId: string | null;
 
-  @ApiProperty()
+  @ApiProperty({
+    description:
+      'true si es un rol global del sistema (solo lo modifica el SUPER_ADMIN)',
+  })
   isGlobal: boolean;
 
   @ApiProperty()
   name: string;
 
-  @ApiProperty({ type: String, nullable: true })
+  @ApiProperty({
+    description: 'Descripción del rol',
+    type: String,
+    nullable: true,
+  })
   description: string | null;
 
   @ApiProperty()
@@ -39,22 +46,22 @@ export class RoleResponseDto {
 }
 
 export class RolePermissionDto {
-  @ApiProperty({ format: 'uuid' })
+  @ApiProperty({ description: 'UUID de la opción de menú', format: 'uuid' })
   menuOptionId: string;
 
-  @ApiProperty()
+  @ApiProperty({ description: 'Slug de la opción de menú' })
   slug: string;
 
   @ApiProperty()
   name: string;
 
-  @ApiProperty()
+  @ApiProperty({ description: 'Puede crear' })
   canCreate: boolean;
 
-  @ApiProperty()
+  @ApiProperty({ description: 'Puede editar' })
   canUpdate: boolean;
 
-  @ApiProperty()
+  @ApiProperty({ description: 'Puede borrar o desactivar' })
   canDelete: boolean;
 }
 

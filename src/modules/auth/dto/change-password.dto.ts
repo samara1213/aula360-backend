@@ -3,7 +3,7 @@ import { IsNotEmpty, IsString, MaxLength } from 'class-validator';
 import { StrongPassword } from './password-fields';
 
 export class ChangePasswordDto {
-  @ApiProperty()
+  @ApiProperty({ description: 'Contraseña actual' })
   @IsString()
   @IsNotEmpty()
   @MaxLength(72)

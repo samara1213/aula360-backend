@@ -74,7 +74,7 @@ export class SubjectPeriodGradeDto {
 }
 
 export class CourseSubjectGradeDto extends SubjectPeriodGradeDto {
-  @ApiProperty({ format: 'uuid' })
+  @ApiProperty({ description: 'UUID de la asignatura', format: 'uuid' })
   subjectId: string;
 }
 
@@ -131,7 +131,7 @@ export class StudentEvaluationScoreDto {
   @ApiProperty({ format: 'uuid' })
   id: string;
 
-  @ApiProperty()
+  @ApiProperty({ description: 'Título de la evaluación' })
   title: string;
 
   @ApiProperty({ example: 20 })
@@ -145,7 +145,7 @@ export class StudentEvaluationScoreDto {
 }
 
 export class StudentPeriodGradeDto extends SubjectPeriodGradeDto {
-  @ApiProperty({ format: 'uuid' })
+  @ApiProperty({ description: 'UUID del periodo', format: 'uuid' })
   periodId: string;
 
   @ApiProperty({ type: [StudentEvaluationScoreDto] })
@@ -164,15 +164,25 @@ export class StudentSubjectGradesDto extends GradebookSubjectDto {
   })
   yearFinal?: number | null;
 
-  @ApiPropertyOptional({ type: Boolean, nullable: true })
+  @ApiPropertyOptional({
+    description:
+      'Solo por año: si la nota anual aprueba; null si falta alguna definitiva',
+    type: Boolean,
+    nullable: true,
+  })
   yearPassed?: boolean | null;
 }
 
 export class PeriodAverageDto {
-  @ApiProperty({ format: 'uuid' })
+  @ApiProperty({ description: 'UUID del periodo', format: 'uuid' })
   periodId: string;
 
-  @ApiProperty({ type: Number, nullable: true })
+  @ApiProperty({
+    description:
+      'Promedio de las definitivas del periodo; null si no hay ninguna',
+    type: Number,
+    nullable: true,
+  })
   average: number | null;
 }
 

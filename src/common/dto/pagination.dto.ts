@@ -7,7 +7,12 @@ export const MAX_PAGE_SIZE = 100;
 export const MAX_PAGE = 10_000;
 
 export class PaginationDto {
-  @ApiPropertyOptional({ default: 1, minimum: 1, maximum: MAX_PAGE })
+  @ApiPropertyOptional({
+    description: 'Página, desde 1',
+    default: 1,
+    minimum: 1,
+    maximum: MAX_PAGE,
+  })
   @IsOptional()
   @Type(() => Number)
   @IsInt()
@@ -15,7 +20,12 @@ export class PaginationDto {
   @Max(MAX_PAGE)
   page: number = 1;
 
-  @ApiPropertyOptional({ default: 20, minimum: 1, maximum: MAX_PAGE_SIZE })
+  @ApiPropertyOptional({
+    description: 'Elementos por página',
+    default: 20,
+    minimum: 1,
+    maximum: MAX_PAGE_SIZE,
+  })
   @IsOptional()
   @Type(() => Number)
   @IsInt()

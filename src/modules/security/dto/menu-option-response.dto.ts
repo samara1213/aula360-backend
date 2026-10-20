@@ -5,19 +5,30 @@ export class MenuOptionResponseDto {
   @ApiProperty({ format: 'uuid' })
   id: string;
 
-  @ApiProperty({ type: String, format: 'uuid', nullable: true })
+  @ApiProperty({
+    description: 'UUID de la opción padre; null en la raíz',
+    type: String,
+    format: 'uuid',
+    nullable: true,
+  })
   parentId: string | null;
 
   @ApiProperty()
   name: string;
 
-  @ApiProperty()
+  @ApiProperty({
+    description: 'Identificador estable de la opción (no cambia)',
+  })
   slug: string;
 
-  @ApiProperty({ type: String, nullable: true })
+  @ApiProperty({
+    description: 'Nombre del ícono, o null',
+    type: String,
+    nullable: true,
+  })
   icon: string | null;
 
-  @ApiProperty()
+  @ApiProperty({ description: 'Orden entre hermanos (ascendente)' })
   displayOrder: number;
 
   @ApiProperty()
@@ -52,13 +63,13 @@ export class MenuNodePermissionsDto {
   })
   view: boolean;
 
-  @ApiProperty()
+  @ApiProperty({ description: 'Puede crear en esta opción' })
   create: boolean;
 
-  @ApiProperty()
+  @ApiProperty({ description: 'Puede editar en esta opción' })
   update: boolean;
 
-  @ApiProperty()
+  @ApiProperty({ description: 'Puede borrar o desactivar en esta opción' })
   delete: boolean;
 }
 
@@ -70,13 +81,20 @@ export class MyMenuNodeDto {
   @ApiProperty()
   name: string;
 
-  @ApiProperty()
+  @ApiProperty({
+    description:
+      'Identificador estable de la opción (lo usa el frontend para la ruta)',
+  })
   slug: string;
 
-  @ApiProperty({ type: String, nullable: true })
+  @ApiProperty({
+    description: 'Nombre del ícono, o null',
+    type: String,
+    nullable: true,
+  })
   icon: string | null;
 
-  @ApiProperty()
+  @ApiProperty({ description: 'Orden entre hermanos (ascendente)' })
   displayOrder: number;
 
   @ApiProperty({ type: MenuNodePermissionsDto })

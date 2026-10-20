@@ -15,7 +15,6 @@ import {
 import {
   ApiBadRequestResponse,
   ApiConflictResponse,
-  ApiCookieAuth,
   ApiCreatedResponse,
   ApiForbiddenResponse,
   ApiNoContentResponse,
@@ -43,7 +42,6 @@ const scopeOf = (user: AuthUser): RoleScope => ({
 
 /** Roles de la institución activa; los globales se ven pero no se modifican aquí. */
 @ApiTags('roles')
-@ApiCookieAuth('access_token')
 @ApiForbiddenResponse({ description: 'Sin permiso para esta acción' })
 @Controller('roles')
 export class RolesController {

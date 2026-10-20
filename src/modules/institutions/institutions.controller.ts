@@ -14,7 +14,6 @@ import {
 import {
   ApiBadRequestResponse,
   ApiConflictResponse,
-  ApiCookieAuth,
   ApiCreatedResponse,
   ApiForbiddenResponse,
   ApiNotFoundResponse,
@@ -46,7 +45,6 @@ import {
 } from './institutions.service';
 
 @ApiTags('institutions')
-@ApiCookieAuth('access_token')
 @ApiForbiddenResponse({ description: 'Sin permiso para esta acción' })
 @Controller('institutions')
 export class InstitutionsController {

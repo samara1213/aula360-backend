@@ -13,7 +13,6 @@ import {
   ApiBadGatewayResponse,
   ApiBadRequestResponse,
   ApiConflictResponse,
-  ApiCookieAuth,
   ApiCreatedResponse,
   ApiForbiddenResponse,
   ApiNotFoundResponse,
@@ -50,7 +49,6 @@ import {
 
 /** Boletines en PDF por estudiante y periodo (fase 10b). */
 @ApiTags('report-cards')
-@ApiCookieAuth('access_token')
 @ApiForbiddenResponse({ description: 'Sin permiso' })
 @Controller('report-cards')
 export class ReportCardsController {

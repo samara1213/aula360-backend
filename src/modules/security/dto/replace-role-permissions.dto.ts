@@ -10,21 +10,28 @@ import {
 } from 'class-validator';
 
 export class RolePermissionInputDto {
-  @ApiProperty({ format: 'uuid' })
+  @ApiProperty({
+    description:
+      'UUID de la opción de menú (activa). Tenerla en la lista da permiso de ver',
+    format: 'uuid',
+  })
   @IsUUID()
   menuOptionId: string;
 
-  @ApiPropertyOptional({ default: false })
+  @ApiPropertyOptional({ description: 'Puede crear', default: false })
   @IsOptional()
   @IsBoolean()
   canCreate?: boolean;
 
-  @ApiPropertyOptional({ default: false })
+  @ApiPropertyOptional({ description: 'Puede editar', default: false })
   @IsOptional()
   @IsBoolean()
   canUpdate?: boolean;
 
-  @ApiPropertyOptional({ default: false })
+  @ApiPropertyOptional({
+    description: 'Puede borrar o desactivar',
+    default: false,
+  })
   @IsOptional()
   @IsBoolean()
   canDelete?: boolean;

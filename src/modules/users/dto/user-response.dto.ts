@@ -27,7 +27,10 @@ export class UserResponseDto {
   @ApiProperty({ format: 'uuid' })
   id: string;
 
-  @ApiProperty()
+  @ApiProperty({
+    description:
+      'Tipo de usuario: SUPER_ADMIN, INSTITUTION_ADMIN, TEACHER o STUDENT',
+  })
   userType: UserType;
 
   @ApiProperty({
@@ -37,7 +40,11 @@ export class UserResponseDto {
   })
   documentType: string | null;
 
-  @ApiProperty({ type: String, nullable: true })
+  @ApiProperty({
+    description: 'Número de documento',
+    type: String,
+    nullable: true,
+  })
   documentNumber: string | null;
 
   @ApiProperty()
@@ -81,7 +88,11 @@ export class UserResponseDto {
   @ApiProperty({ description: 'Debe cambiar la contraseña temporal' })
   mustChangePassword: boolean;
 
-  @ApiProperty({ type: Date, nullable: true })
+  @ApiProperty({
+    description: 'Último inicio de sesión; null si nunca entró',
+    type: Date,
+    nullable: true,
+  })
   lastLoginAt: Date | null;
 
   @ApiProperty({

@@ -18,7 +18,7 @@ const trim = ({ value }: { value: unknown }) =>
 const SCALE_VALUE = { maxDecimalPlaces: 2, allowNaN: false } as const;
 
 export class CreateInstitutionDto {
-  @ApiProperty({ example: '900123456-7', maxLength: 50 })
+  @ApiProperty({ example: '000000000-0', maxLength: 50 })
   @Transform(trim)
   @IsString()
   @IsNotEmpty()

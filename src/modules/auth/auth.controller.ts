@@ -11,8 +11,6 @@ import {
 import {
   ApiBadRequestResponse,
   ApiConflictResponse,
-  ApiCookieAuth,
-  ApiForbiddenResponse,
   ApiNoContentResponse,
   ApiNotFoundResponse,
   ApiOkResponse,
@@ -98,7 +96,6 @@ export class AuthController {
 
   @Get('me')
   @AllowPendingPasswordChange()
-  @ApiCookieAuth()
   @ApiOperation({ summary: 'Usuario autenticado, institución activa y roles' })
   @ApiOkResponse({ type: SessionResponseDto })
   @ApiUnauthorizedResponse()
@@ -108,13 +105,11 @@ export class AuthController {
 
   @Post('switch-institution')
   @HttpCode(HttpStatus.OK)
-  @ApiCookieAuth()
   @ApiOperation({ summary: 'Cambiar la institución activa' })
   @ApiOkResponse({ type: SessionResponseDto })
   @ApiNotFoundResponse({
     description: 'El usuario no pertenece a esa institución',
   })
-  @ApiForbiddenResponse({ description: 'Debe cambiar la contraseña primero' })
   async switchInstitution(
     @CurrentUser() user: AuthUser,
     @Body() dto: SwitchInstitutionDto,
@@ -138,7 +133,8 @@ export class AuthController {
   })
   @ApiNoContentResponse()
   @ApiUnauthorizedResponse({
-    description: 'Refresh token inválido, vencido o reutilizado',
+    description:
+      'Refresh token inválido, vencido o reutilizado. Reutilizar uno ya usado cierra todas las sesiones del usuario: hacer una sola renovación a la vez',
   })
   async refresh(
     @Req() req: Request,
@@ -178,7 +174,6 @@ export class AuthController {
   @Post('change-password')
   @AllowPendingPasswordChange()
   @HttpCode(HttpStatus.NO_CONTENT)
-  @ApiCookieAuth()
   @ApiOperation({
     summary: 'Cambiar la contraseña',
     description:
@@ -244,7 +239,6 @@ export class AuthController {
   @Throttle(SENSITIVE_ACTION_THROTTLE)
   @Post('verify-email/resend')
   @HttpCode(HttpStatus.NO_CONTENT)
-  @ApiCookieAuth()
   @ApiOperation({
     summary: 'Reenviar el enlace de verificación (respuesta siempre igual)',
     description:

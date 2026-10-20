@@ -69,7 +69,12 @@ export class CreateMenuOptionDto {
   @MaxLength(100)
   icon?: string | null;
 
-  @ApiPropertyOptional({ default: 0, minimum: 0, maximum: 10000 })
+  @ApiPropertyOptional({
+    description: 'Orden entre hermanos (ascendente)',
+    default: 0,
+    minimum: 0,
+    maximum: 10000,
+  })
   @IsOptional()
   @IsInt()
   @Min(0)

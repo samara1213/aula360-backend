@@ -34,7 +34,7 @@ export class UserPersonalDataDto {
   @Matches(/^[A-Z]{1,20}$/, { message: 'documentType solo admite letras' })
   documentType: string;
 
-  @ApiProperty({ example: '1020304050', maxLength: 50 })
+  @ApiProperty({ example: '0000000000', maxLength: 50 })
   @Transform(trim)
   @IsString()
   @IsNotEmpty()
@@ -61,7 +61,7 @@ export class UserPersonalDataDto {
   @ApiPropertyOptional({
     type: String,
     nullable: true,
-    example: 'ana.perez@colegio.edu.co',
+    example: 'ana.perez@ejemplo.test',
     description: 'Opcional (muchos estudiantes no tienen correo)',
   })
   @IsOptional()
@@ -74,7 +74,7 @@ export class UserPersonalDataDto {
   @ApiPropertyOptional({
     type: String,
     nullable: true,
-    example: '+57 300 123 4567',
+    example: '+57 300 000 0000',
   })
   @IsOptional()
   @ValidateIf((_o, value) => value !== null)
@@ -89,7 +89,10 @@ export class UserPersonalDataDto {
 }
 
 export class CreateUserDto extends UserPersonalDataDto {
-  @ApiProperty({ enum: CREATABLE_USER_TYPES })
+  @ApiProperty({
+    description: 'Tipo de usuario a crear',
+    enum: CREATABLE_USER_TYPES,
+  })
   @IsIn(CREATABLE_USER_TYPES)
   userType: (typeof CREATABLE_USER_TYPES)[number];
 

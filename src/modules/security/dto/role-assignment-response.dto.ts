@@ -30,7 +30,7 @@ export class AssignmentUserDto {
   @ApiProperty({ type: String, nullable: true })
   email: string | null;
 
-  @ApiProperty()
+  @ApiProperty({ description: 'Tipo de usuario' })
   userType: UserType;
 }
 
@@ -41,7 +41,7 @@ export class AssignmentRoleDto {
   @ApiProperty()
   name: string;
 
-  @ApiProperty()
+  @ApiProperty({ description: 'true si es un rol global del sistema' })
   isGlobal: boolean;
 }
 

@@ -14,7 +14,6 @@ import {
 import {
   ApiBadRequestResponse,
   ApiConflictResponse,
-  ApiCookieAuth,
   ApiCreatedResponse,
   ApiForbiddenResponse,
   ApiNoContentResponse,
@@ -39,7 +38,6 @@ const CAMPUS_SCOPE =
   'Quien está limitado a sedes solo ve y gestiona los cursos de esas sedes.';
 
 @ApiTags('courses')
-@ApiCookieAuth('access_token')
 @ApiForbiddenResponse({ description: 'Sin permiso para esta acción' })
 @Controller('courses')
 export class CoursesController {

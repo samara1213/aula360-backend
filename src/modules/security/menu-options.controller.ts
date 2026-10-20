@@ -10,7 +10,6 @@ import {
 import {
   ApiBadRequestResponse,
   ApiConflictResponse,
-  ApiCookieAuth,
   ApiCreatedResponse,
   ApiForbiddenResponse,
   ApiNotFoundResponse,
@@ -35,7 +34,6 @@ import { MENU_PERMISSION, MenuOptionsService } from './menu-options.service';
 
 /** Menú global: lo consulta quien gestiona roles; solo el SUPER_ADMIN lo modifica. */
 @ApiTags('menu-options')
-@ApiCookieAuth('access_token')
 @ApiForbiddenResponse({ description: 'Sin permiso para esta acción' })
 @Controller('menu-options')
 export class MenuOptionsController {

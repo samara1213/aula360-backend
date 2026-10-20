@@ -11,7 +11,6 @@ import {
 import {
   ApiBadRequestResponse,
   ApiConflictResponse,
-  ApiCookieAuth,
   ApiNoContentResponse,
   ApiNotFoundResponse,
   ApiOkResponse,
@@ -34,7 +33,6 @@ import { UsersService } from './users.service';
 
 /** Rutas sobre el propio usuario: siempre el del token, nunca un id del cliente. */
 @ApiTags('users')
-@ApiCookieAuth('access_token')
 @Controller('users')
 export class UsersController {
   constructor(

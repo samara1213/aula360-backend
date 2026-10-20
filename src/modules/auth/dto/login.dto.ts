@@ -8,7 +8,7 @@ const trim = ({ value }: { value: unknown }) =>
 export class LoginDto {
   @ApiProperty({
     description: 'Email o número de documento',
-    example: 'admin@colegio.edu.co',
+    example: 'admin@ejemplo.test',
   })
   @Transform(trim)
   @IsString()

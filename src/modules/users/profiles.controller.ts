@@ -12,7 +12,6 @@ import {
 import {
   ApiBadRequestResponse,
   ApiConflictResponse,
-  ApiCookieAuth,
   ApiCreatedResponse,
   ApiForbiddenResponse,
   ApiNotFoundResponse,
@@ -63,7 +62,6 @@ const PERSONAL_NOTE =
   'Datos personales con las reglas de PATCH /users/:id (el email solo lo cambia un SUPER_ADMIN; el documento, solo si pertenece únicamente a esta institución). La baja es PATCH /users/:id/status.';
 
 @ApiTags('teachers')
-@ApiCookieAuth('access_token')
 @ApiForbiddenResponse({ description: 'Sin permiso para esta acción' })
 @Controller('teachers')
 export class TeachersController {
@@ -134,7 +132,6 @@ export class TeachersController {
 }
 
 @ApiTags('students')
-@ApiCookieAuth('access_token')
 @ApiForbiddenResponse({ description: 'Sin permiso para esta acción' })
 @Controller('students')
 export class StudentsController {

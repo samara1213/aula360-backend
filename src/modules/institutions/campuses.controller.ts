@@ -11,7 +11,6 @@ import {
 import {
   ApiBadRequestResponse,
   ApiConflictResponse,
-  ApiCookieAuth,
   ApiCreatedResponse,
   ApiForbiddenResponse,
   ApiNotFoundResponse,
@@ -30,7 +29,6 @@ import { UpdateCampusDto } from './dto/update-campus.dto';
 
 /** Sedes de la institución activa (la del token; nunca se recibe del cliente). */
 @ApiTags('campuses')
-@ApiCookieAuth('access_token')
 @ApiForbiddenResponse({ description: 'Sin permiso para esta acción' })
 @Controller('campuses')
 export class CampusesController {

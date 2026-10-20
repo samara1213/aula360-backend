@@ -25,7 +25,7 @@ export class CreateCourseDto {
   @MaxLength(100)
   name: string;
 
-  @ApiProperty({ format: 'uuid' })
+  @ApiProperty({ description: 'UUID del grado', format: 'uuid' })
   @IsUUID()
   gradeId: string;
 
@@ -42,17 +42,26 @@ export class CreateCourseDto {
 export class UpdateCourseDto extends PartialType(CreateCourseDto) {}
 
 export class CourseQueryDto extends SearchQueryDto {
-  @ApiPropertyOptional({ format: 'uuid' })
+  @ApiPropertyOptional({
+    description: 'Solo los cursos de este año lectivo',
+    format: 'uuid',
+  })
   @IsOptional()
   @IsUUID()
   academicYearId?: string;
 
-  @ApiPropertyOptional({ format: 'uuid' })
+  @ApiPropertyOptional({
+    description: 'Solo los cursos de este grado',
+    format: 'uuid',
+  })
   @IsOptional()
   @IsUUID()
   gradeId?: string;
 
-  @ApiPropertyOptional({ format: 'uuid' })
+  @ApiPropertyOptional({
+    description: 'Solo los cursos de esta sede',
+    format: 'uuid',
+  })
   @IsOptional()
   @IsUUID()
   campusId?: string;

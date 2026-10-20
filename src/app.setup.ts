@@ -1,10 +1,11 @@
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import { SwaggerModule } from '@nestjs/swagger';
 import * as cookieParser from 'cookie-parser';
 import helmet from 'helmet';
 import { bodyParserMiddlewares } from './common/middleware/body-parser.middleware';
 import { originCheckMiddleware } from './common/middleware/origin-check.middleware';
+import { createOpenApiDocument } from './common/swagger/openapi';
 import { uploadSizeMiddleware } from './common/middleware/upload-size.middleware';
 import { MULTIPART_MAX_BYTES } from './storage/storage.constants';
 
@@ -61,14 +62,7 @@ export function configureApp(app: INestApplication): void {
 
 /** Swagger en /api/docs (deshabilitado en producción). */
 export function setupSwagger(app: INestApplication): void {
-  const document = SwaggerModule.createDocument(
-    app,
-    new DocumentBuilder()
-      .setTitle('Aula360 API')
-      .setDescription('API del backend de Aula360 (multi-institución)')
-      .setVersion('1.0')
-      .addCookieAuth('access_token')
-      .build(),
-  );
-  SwaggerModule.setup(`${API_PREFIX}/docs`, app, document);
+  SwaggerModule.setup(`${API_PREFIX}/docs`, app, createOpenApiDocument(app), {
+    swaggerOptions: { withCredentials: true },
+  });
 }

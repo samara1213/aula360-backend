@@ -2,7 +2,7 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsOptional, IsUUID, ValidateIf } from 'class-validator';
 
 export class CreateRoleAssignmentDto {
-  @ApiProperty({ format: 'uuid' })
+  @ApiProperty({ description: 'UUID del usuario', format: 'uuid' })
   @IsUUID()
   userId: string;
 

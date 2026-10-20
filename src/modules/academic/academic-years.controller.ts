@@ -14,7 +14,6 @@ import {
 import {
   ApiBadRequestResponse,
   ApiConflictResponse,
-  ApiCookieAuth,
   ApiCreatedResponse,
   ApiForbiddenResponse,
   ApiNoContentResponse,
@@ -48,7 +47,6 @@ const INSTITUTION_WIDE =
   'Requiere alcance en toda la institución (quien está limitado a sedes solo consulta).';
 
 @ApiTags('academic-years')
-@ApiCookieAuth('access_token')
 @ApiForbiddenResponse({ description: 'Sin permiso para esta acción' })
 @Controller('academic-years')
 export class AcademicYearsController {
@@ -160,7 +158,6 @@ export class AcademicYearsController {
 }
 
 @ApiTags('periods')
-@ApiCookieAuth('access_token')
 @ApiForbiddenResponse({ description: 'Sin permiso para esta acción' })
 @Controller('periods')
 export class PeriodsController {

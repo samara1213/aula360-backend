@@ -12,10 +12,10 @@ export class ProfileUserDto {
   @ApiProperty({ format: 'uuid' })
   id: string;
 
-  @ApiProperty()
+  @ApiProperty({ description: 'Tipo de documento' })
   documentType: string;
 
-  @ApiProperty()
+  @ApiProperty({ description: 'Número de documento' })
   documentNumber: string;
 
   @ApiProperty()
@@ -66,10 +66,14 @@ export class TeacherResponseDto {
   @ApiProperty({ format: 'uuid' })
   institutionId: string;
 
-  @ApiProperty({ type: String, nullable: true })
+  @ApiProperty({
+    description: 'Título académico',
+    type: String,
+    nullable: true,
+  })
   academicDegree: string | null;
 
-  @ApiProperty({ type: String, nullable: true })
+  @ApiProperty({ description: 'Especialidad', type: String, nullable: true })
   specialty: string | null;
 
   @ApiProperty({ type: ProfileUserDto })
@@ -172,7 +176,11 @@ export class StudentSummaryDto {
   @ApiProperty({ format: 'uuid' })
   institutionId: string;
 
-  @ApiProperty({ type: String, nullable: true })
+  @ApiProperty({
+    description: 'Código del estudiante en la institución',
+    type: String,
+    nullable: true,
+  })
   studentCode: string | null;
 
   @ApiProperty({ type: AssignmentCampusDto, nullable: true })

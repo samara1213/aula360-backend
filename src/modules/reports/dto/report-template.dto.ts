@@ -30,7 +30,11 @@ export class ReportTemplateResponseDto {
   @ApiProperty()
   name: string;
 
-  @ApiProperty({ type: String, nullable: true })
+  @ApiProperty({
+    description: 'Descripción de la plantilla',
+    type: String,
+    nullable: true,
+  })
   description: string | null;
 
   @ApiProperty({
@@ -41,7 +45,12 @@ export class ReportTemplateResponseDto {
   @ApiProperty({ description: 'SHA-256 del archivo HTML' })
   contentSha256: string;
 
-  @ApiProperty({ type: String, format: 'uuid', nullable: true })
+  @ApiProperty({
+    description: 'UUID del usuario que la subió; null si ya no existe',
+    type: String,
+    format: 'uuid',
+    nullable: true,
+  })
   createdBy: string | null;
 
   @ApiProperty()

@@ -14,7 +14,6 @@ import {
 import {
   ApiBadRequestResponse,
   ApiConflictResponse,
-  ApiCookieAuth,
   ApiCreatedResponse,
   ApiForbiddenResponse,
   ApiNotFoundResponse,
@@ -62,7 +61,6 @@ const EXCLUSIVE_NOTE =
  * Se registra DESPUÉS de UsersController: así /users/me/avatar no cae en /users/:id/avatar.
  */
 @ApiTags('users')
-@ApiCookieAuth('access_token')
 @ApiForbiddenResponse({ description: 'Sin permiso para esta acción' })
 @Controller('users')
 export class ManagedUsersController {
@@ -184,7 +182,6 @@ export class ManagedUsersController {
  * administrador y resuelve los casos de usuarios en varias instituciones.
  */
 @ApiTags('users')
-@ApiCookieAuth('access_token')
 @ApiForbiddenResponse({ description: 'Solo SUPER_ADMIN' })
 @SuperAdminOnly()
 @Controller('institutions/:institutionId/users')

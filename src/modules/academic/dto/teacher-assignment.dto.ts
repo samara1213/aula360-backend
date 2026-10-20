@@ -10,11 +10,11 @@ const toBoolean = ({ value }: { value: unknown }) =>
   value === 'true' ? true : value === 'false' ? false : value;
 
 export class CreateTeacherAssignmentDto {
-  @ApiProperty({ format: 'uuid' })
+  @ApiProperty({ description: 'UUID del curso', format: 'uuid' })
   @IsUUID()
   courseId: string;
 
-  @ApiProperty({ format: 'uuid' })
+  @ApiProperty({ description: 'UUID de la asignatura', format: 'uuid' })
   @IsUUID()
   subjectId: string;
 
@@ -37,22 +37,34 @@ export class ReplaceTeacherDto {
 }
 
 export class TeacherAssignmentQueryDto extends PaginationDto {
-  @ApiPropertyOptional({ format: 'uuid' })
+  @ApiPropertyOptional({
+    description: 'Solo las cargas de este curso',
+    format: 'uuid',
+  })
   @IsOptional()
   @IsUUID()
   courseId?: string;
 
-  @ApiPropertyOptional({ format: 'uuid' })
+  @ApiPropertyOptional({
+    description: 'Solo las cargas de esta asignatura',
+    format: 'uuid',
+  })
   @IsOptional()
   @IsUUID()
   subjectId?: string;
 
-  @ApiPropertyOptional({ format: 'uuid' })
+  @ApiPropertyOptional({
+    description: 'Solo las cargas de este docente',
+    format: 'uuid',
+  })
   @IsOptional()
   @IsUUID()
   teacherId?: string;
 
-  @ApiPropertyOptional({ format: 'uuid' })
+  @ApiPropertyOptional({
+    description: 'Solo las cargas de este año lectivo',
+    format: 'uuid',
+  })
   @IsOptional()
   @IsUUID()
   academicYearId?: string;
@@ -79,7 +91,7 @@ export class AssignmentTeacherDto {
   @ApiProperty({ format: 'uuid', description: 'Id del perfil de docente' })
   id: string;
 
-  @ApiProperty({ format: 'uuid' })
+  @ApiProperty({ description: 'UUID del usuario del docente', format: 'uuid' })
   userId: string;
 
   @ApiProperty()
@@ -111,7 +123,11 @@ export class TeacherAssignmentResponseDto {
   @ApiProperty()
   createdAt: Date;
 
-  @ApiProperty({ type: Date, nullable: true })
+  @ApiProperty({
+    description: 'Cuándo se desactivó la carga; null si está activa',
+    type: Date,
+    nullable: true,
+  })
   deactivatedAt: Date | null;
 
   /** Requiere course (con grade, campus y academicYear), subject y teacher.user. */

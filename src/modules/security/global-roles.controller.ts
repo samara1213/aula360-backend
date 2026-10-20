@@ -15,7 +15,6 @@ import {
 import {
   ApiBadRequestResponse,
   ApiConflictResponse,
-  ApiCookieAuth,
   ApiCreatedResponse,
   ApiForbiddenResponse,
   ApiNoContentResponse,
@@ -36,7 +35,6 @@ const GLOBAL: RoleScope = { kind: 'global' };
 
 /** Roles globales del sistema (se asignan en cualquier institución). Solo SUPER_ADMIN. */
 @ApiTags('global-roles')
-@ApiCookieAuth('access_token')
 @ApiForbiddenResponse({ description: 'Solo SUPER_ADMIN' })
 @SuperAdminOnly()
 @Controller('global-roles')

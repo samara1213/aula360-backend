@@ -15,7 +15,6 @@ import {
 } from '@nestjs/common';
 import {
   ApiConflictResponse,
-  ApiCookieAuth,
   ApiCreatedResponse,
   ApiForbiddenResponse,
   ApiNoContentResponse,
@@ -44,17 +43,25 @@ const pdf = (buffer: Buffer) =>
     disposition: 'inline; filename="vista-previa.pdf"',
   });
 
+const TEMPLATE_THROTTLE_RESPONSE = {
+  description: 'Subidas y vistas previas: 10 por minuto (por usuario)',
+};
+
+/** Respuesta de las vistas previas: el PDF en el cuerpo. */
+const PDF_RESPONSE = {
+  description: 'PDF (no se guarda)',
+  content: {
+    'application/pdf': { schema: { type: 'string', format: 'binary' } },
+  },
+};
+
 /**
  * Plantillas HTML (Handlebars) del boletín de una institución. Solo el
  * SUPER_ADMIN: el HTML se procesa en el servidor (con Chromium endurecido).
  */
 @ApiTags('report-card-templates')
-@ApiCookieAuth('access_token')
 @ApiForbiddenResponse({ description: 'Solo SUPER_ADMIN' })
 @ApiNotFoundResponse({ description: 'Institución o plantilla no encontrada' })
-@ApiTooManyRequestsResponse({
-  description: 'Subidas y vistas previas: 10 por minuto (por usuario)',
-})
 @SuperAdminOnly()
 @Controller('institutions/:institutionId/report-card-templates')
 export class ReportTemplatesController {
@@ -71,6 +78,7 @@ export class ReportTemplatesController {
 
   @Post()
   @Throttle(SENSITIVE_ACTION_THROTTLE)
+  @ApiTooManyRequestsResponse(TEMPLATE_THROTTLE_RESPONSE)
   @TemplateUpload()
   @ApiOperation({
     summary: 'Subir una plantilla',
@@ -90,6 +98,7 @@ export class ReportTemplatesController {
 
   @Get('system/preview')
   @Throttle(SENSITIVE_ACTION_THROTTLE)
+  @ApiTooManyRequestsResponse(TEMPLATE_THROTTLE_RESPONSE)
   @Header('Cache-Control', 'no-store')
   @ApiOperation({
     summary: 'Vista previa de la plantilla del sistema',
@@ -97,7 +106,7 @@ export class ReportTemplatesController {
       'Con datos de ejemplo y el nombre, logo, escala y niveles de la institución.',
   })
   @ApiProduces('application/pdf')
-  @ApiOkResponse({ description: 'PDF' })
+  @ApiOkResponse(PDF_RESPONSE)
   async previewSystem(
     @Param('institutionId', ParseUUIDPipe) institutionId: string,
   ): Promise<StreamableFile> {
@@ -106,6 +115,7 @@ export class ReportTemplatesController {
 
   @Get(':id/preview')
   @Throttle(SENSITIVE_ACTION_THROTTLE)
+  @ApiTooManyRequestsResponse(TEMPLATE_THROTTLE_RESPONSE)
   @Header('Cache-Control', 'no-store')
   @ApiOperation({
     summary: 'Vista previa de una plantilla',
@@ -113,7 +123,7 @@ export class ReportTemplatesController {
       'Con datos de ejemplo (nunca de un estudiante real) y el nombre, logo, escala y niveles de la institución.',
   })
   @ApiProduces('application/pdf')
-  @ApiOkResponse({ description: 'PDF' })
+  @ApiOkResponse(PDF_RESPONSE)
   async preview(
     @Param('institutionId', ParseUUIDPipe) institutionId: string,
     @Param('id', ParseUUIDPipe) id: string,

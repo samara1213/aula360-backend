@@ -15,3 +15,6 @@
 .vscode/*
 !.vscode/extensions.json
 .idea
+
+# Documento OpenAPI generado (yarn openapi:export)
+openapi.json

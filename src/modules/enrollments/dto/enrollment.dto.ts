@@ -88,22 +88,34 @@ export class UpdateEnrollmentDto {
 }
 
 export class EnrollmentQueryDto extends SearchQueryDto {
-  @ApiPropertyOptional({ format: 'uuid' })
+  @ApiPropertyOptional({
+    description: 'Solo las matrículas de este curso',
+    format: 'uuid',
+  })
   @IsOptional()
   @IsUUID()
   courseId?: string;
 
-  @ApiPropertyOptional({ format: 'uuid' })
+  @ApiPropertyOptional({
+    description: 'Solo las matrículas de este año lectivo',
+    format: 'uuid',
+  })
   @IsOptional()
   @IsUUID()
   academicYearId?: string;
 
-  @ApiPropertyOptional({ format: 'uuid' })
+  @ApiPropertyOptional({
+    description: 'Solo las matrículas de este estudiante',
+    format: 'uuid',
+  })
   @IsOptional()
   @IsUUID()
   studentId?: string;
 
-  @ApiPropertyOptional({ enum: ENROLLMENT_STATUSES })
+  @ApiPropertyOptional({
+    description: 'Solo las matrículas con este estado',
+    enum: ENROLLMENT_STATUSES,
+  })
   @IsOptional()
   @IsIn(ENROLLMENT_STATUSES)
   status?: EnrollmentStatus;
@@ -114,7 +126,11 @@ export class EnrollmentStudentDto {
   @ApiProperty({ format: 'uuid', description: 'Id del perfil de estudiante' })
   id: string;
 
-  @ApiProperty({ type: String, nullable: true })
+  @ApiProperty({
+    description: 'Código del estudiante en la institución',
+    type: String,
+    nullable: true,
+  })
   studentCode: string | null;
 
   @ApiProperty()
@@ -142,10 +158,13 @@ export class EnrollmentResponseDto {
   @ApiProperty({ format: 'uuid' })
   id: string;
 
-  @ApiProperty({ enum: ENROLLMENT_STATUSES })
+  @ApiProperty({
+    description: 'Estado de la matrícula',
+    enum: ENROLLMENT_STATUSES,
+  })
   status: EnrollmentStatus;
 
-  @ApiProperty()
+  @ApiProperty({ description: 'Fecha de matrícula' })
   enrollmentDate: Date;
 
   @ApiPropertyOptional({

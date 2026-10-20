@@ -5,7 +5,11 @@ export class SessionUserDto {
   @ApiProperty({ format: 'uuid' })
   id: string;
 
-  @ApiProperty({ enum: USER_TYPES })
+  @ApiProperty({
+    description:
+      'Tipo de usuario: SUPER_ADMIN, INSTITUTION_ADMIN, TEACHER o STUDENT',
+    enum: USER_TYPES,
+  })
   userType: UserType;
 
   @ApiProperty()
@@ -29,7 +33,12 @@ export class SessionUserDto {
   })
   pendingEmail: string | null;
 
-  @ApiPropertyOptional({ type: String, nullable: true })
+  @ApiPropertyOptional({
+    description:
+      'null si no tiene avatar; la imagen se pide con GET /api/users/me/avatar',
+    type: String,
+    nullable: true,
+  })
   avatarPath: string | null;
 
   @ApiProperty({ description: 'Debe cambiar la contraseña antes de continuar' })
@@ -65,6 +74,6 @@ export class SessionResponseDto {
 }
 
 export class MessageResponseDto {
-  @ApiProperty()
+  @ApiProperty({ description: 'Mensaje para el usuario' })
   message: string;
 }

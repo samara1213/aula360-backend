@@ -15,7 +15,6 @@ import {
 import {
   ApiBadRequestResponse,
   ApiConflictResponse,
-  ApiCookieAuth,
   ApiCreatedResponse,
   ApiForbiddenResponse,
   ApiNoContentResponse,
@@ -51,7 +50,6 @@ const RULES =
   'El docente actúa sobre su propia carga activa y mientras el periodo no haya terminado; un administrador, en los cursos de sus sedes. La suma de porcentajes por materia, curso y periodo no supera 100.';
 
 @ApiTags('evaluations')
-@ApiCookieAuth('access_token')
 @ApiForbiddenResponse({
   description: 'Sin permiso, o periodo terminado (solo un administrador)',
 })

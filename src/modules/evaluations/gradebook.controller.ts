@@ -1,7 +1,6 @@
 import { Controller, Get, Param, ParseUUIDPipe, Query } from '@nestjs/common';
 import {
   ApiBadRequestResponse,
-  ApiCookieAuth,
   ApiForbiddenResponse,
   ApiNotFoundResponse,
   ApiOkResponse,
@@ -28,7 +27,6 @@ const RULES =
 
 /** Cuadro de notas ("gradebook"; /grades son los grados escolares). */
 @ApiTags('gradebook')
-@ApiCookieAuth('access_token')
 @ApiForbiddenResponse({ description: 'Sin permiso' })
 @ApiTooManyRequestsResponse({
   description: 'Más de 60 consultas por minuto (por usuario)',

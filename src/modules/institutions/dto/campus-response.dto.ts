@@ -12,10 +12,10 @@ export class CampusResponseDto {
   @ApiProperty()
   name: string;
 
-  @ApiProperty({ type: String, nullable: true })
+  @ApiProperty({ description: 'Dirección', type: String, nullable: true })
   address: string | null;
 
-  @ApiProperty({ type: String, nullable: true })
+  @ApiProperty({ description: 'Ciudad', type: String, nullable: true })
   city: string | null;
 
   @ApiProperty()

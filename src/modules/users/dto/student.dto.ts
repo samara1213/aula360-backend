@@ -71,7 +71,7 @@ export class StudentProfileFieldsDto {
   @ApiPropertyOptional({
     type: String,
     nullable: true,
-    example: '+57 300 765 4321',
+    example: '+57 300 000 0001',
   })
   @IsOptional()
   @ValidateIf((_o, value) => value !== null)
@@ -87,7 +87,7 @@ export class StudentProfileFieldsDto {
   @ApiPropertyOptional({
     type: String,
     nullable: true,
-    example: 'marta.gomez@correo.com',
+    example: 'marta.gomez@ejemplo.test',
   })
   @IsOptional()
   @ValidateIf((_o, value) => value !== null)

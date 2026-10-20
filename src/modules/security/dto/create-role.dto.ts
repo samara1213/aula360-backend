@@ -22,7 +22,12 @@ export class CreateRoleDto {
   @MaxLength(100)
   name: string;
 
-  @ApiPropertyOptional({ type: String, nullable: true, maxLength: 1000 })
+  @ApiPropertyOptional({
+    description: 'Descripción del rol',
+    type: String,
+    nullable: true,
+    maxLength: 1000,
+  })
   @IsOptional()
   @Transform(trimOrNull)
   @ValidateIf((_o, value) => value !== null)

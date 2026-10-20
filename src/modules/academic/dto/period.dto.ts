@@ -68,7 +68,7 @@ export class PeriodResponseDto {
   @ApiProperty({ format: 'uuid' })
   id: string;
 
-  @ApiProperty({ format: 'uuid' })
+  @ApiProperty({ description: 'UUID del año lectivo', format: 'uuid' })
   academicYearId: string;
 
   @ApiProperty()

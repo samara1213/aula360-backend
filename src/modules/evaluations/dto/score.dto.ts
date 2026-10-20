@@ -15,7 +15,10 @@ import { EvaluationResponseDto } from './evaluation.dto';
 export const MAX_SCORES_BATCH = 200;
 
 export class ScoreEntryDto {
-  @ApiProperty({ format: 'uuid' })
+  @ApiProperty({
+    description: 'UUID del estudiante (su usuario)',
+    format: 'uuid',
+  })
   @IsUUID()
   studentId: string;
 
@@ -56,7 +59,10 @@ export class GradingScaleDto {
 }
 
 export class ScoreStudentDto {
-  @ApiProperty({ format: 'uuid' })
+  @ApiProperty({
+    description: 'UUID del estudiante (su usuario)',
+    format: 'uuid',
+  })
   studentId: string;
 
   @ApiProperty()
@@ -76,7 +82,10 @@ export class ScoreStudentDto {
   @ApiProperty({ type: Number, nullable: true, example: 4.5 })
   score: number | null;
 
-  @ApiProperty({ enum: ['GRADED', 'PENDING'] })
+  @ApiProperty({
+    description: 'GRADED si tiene nota; PENDING si falta',
+    enum: ['GRADED', 'PENDING'],
+  })
   status: 'GRADED' | 'PENDING';
 
   @ApiProperty({ type: Date, nullable: true })

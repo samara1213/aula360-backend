@@ -3,7 +3,7 @@ import { Transform } from 'class-transformer';
 import { IsEmail, MaxLength } from 'class-validator';
 
 export class ForgotPasswordDto {
-  @ApiProperty({ example: 'usuario@colegio.edu.co' })
+  @ApiProperty({ example: 'usuario@ejemplo.test' })
   @Transform(({ value }: { value: unknown }) =>
     typeof value === 'string' ? value.trim() : value,
   )

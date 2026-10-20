@@ -13,7 +13,6 @@ import {
 import {
   ApiBadRequestResponse,
   ApiConflictResponse,
-  ApiCookieAuth,
   ApiCreatedResponse,
   ApiForbiddenResponse,
   ApiNoContentResponse,
@@ -49,7 +48,6 @@ const scopeOf = (user: AuthUser): AssignmentScope => ({
 
 /** Vínculos usuario-rol-sede en la institución activa. */
 @ApiTags('role-assignments')
-@ApiCookieAuth('access_token')
 @ApiForbiddenResponse({ description: 'Sin permiso para esta acción' })
 @Controller('role-assignments')
 export class RoleAssignmentsController {
@@ -100,7 +98,6 @@ export class RoleAssignmentsController {
 
 /** El SUPER_ADMIN vincula usuarios en cualquier institución (p. ej. su primer administrador). */
 @ApiTags('role-assignments')
-@ApiCookieAuth('access_token')
 @ApiForbiddenResponse({ description: 'Solo SUPER_ADMIN' })
 @SuperAdminOnly()
 @Controller('institutions/:institutionId/role-assignments')

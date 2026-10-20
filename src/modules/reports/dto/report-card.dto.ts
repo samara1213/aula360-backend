@@ -9,7 +9,10 @@ const toBoolean = ({ value }: { value: unknown }) =>
   value === 'true' ? true : value === 'false' ? false : value;
 
 export class GenerateReportCardDto {
-  @ApiProperty({ format: 'uuid' })
+  @ApiProperty({
+    description: 'UUID del estudiante (su usuario)',
+    format: 'uuid',
+  })
   @IsUUID()
   studentId: string;
 
@@ -31,7 +34,7 @@ export class GenerateReportCardDto {
 }
 
 export class BatchReportCardsDto {
-  @ApiProperty({ format: 'uuid' })
+  @ApiProperty({ description: 'UUID del curso', format: 'uuid' })
   @IsUUID()
   courseId: string;
 
@@ -50,7 +53,10 @@ export class BatchReportCardsDto {
 }
 
 class BatchSkippedDto {
-  @ApiProperty({ format: 'uuid' })
+  @ApiProperty({
+    description: 'UUID del estudiante (su usuario)',
+    format: 'uuid',
+  })
   studentId: string;
 
   @ApiProperty({ example: 'Faltan definitivas en: Inglés. Use force para...' })
@@ -58,7 +64,10 @@ class BatchSkippedDto {
 }
 
 class BatchFailedDto {
-  @ApiProperty({ format: 'uuid' })
+  @ApiProperty({
+    description: 'UUID del estudiante (su usuario)',
+    format: 'uuid',
+  })
   studentId: string;
 }
 
@@ -86,17 +95,26 @@ export class BatchReportCardsResultDto {
 }
 
 export class ReportCardQueryDto extends PaginationDto {
-  @ApiPropertyOptional({ format: 'uuid' })
+  @ApiPropertyOptional({
+    description: 'Solo los boletines de este curso',
+    format: 'uuid',
+  })
   @IsOptional()
   @IsUUID()
   courseId?: string;
 
-  @ApiPropertyOptional({ format: 'uuid' })
+  @ApiPropertyOptional({
+    description: 'Solo los boletines de este periodo',
+    format: 'uuid',
+  })
   @IsOptional()
   @IsUUID()
   periodId?: string;
 
-  @ApiPropertyOptional({ format: 'uuid' })
+  @ApiPropertyOptional({
+    description: 'Solo los boletines de este estudiante',
+    format: 'uuid',
+  })
   @IsOptional()
   @IsUUID()
   studentId?: string;
@@ -162,10 +180,20 @@ export class ReportCardResponseDto {
   })
   outdated: boolean;
 
-  @ApiProperty({ type: Date, nullable: true })
+  @ApiProperty({
+    description:
+      'Cuándo cambió una nota o evaluación después de generarlo; null si está vigente',
+    type: Date,
+    nullable: true,
+  })
   outdatedAt: Date | null;
 
-  @ApiProperty({ type: String, format: 'uuid', nullable: true })
+  @ApiProperty({
+    description: 'UUID del usuario que lo generó; null si ya no existe',
+    type: String,
+    format: 'uuid',
+    nullable: true,
+  })
   generatedBy: string | null;
 
   @ApiProperty({ description: 'Fecha de la última generación' })

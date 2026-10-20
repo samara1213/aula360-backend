@@ -17,7 +17,7 @@ export class VerifyEmailDto {
 
 export class ChangeOwnEmailDto {
   @ApiProperty({
-    example: 'nuevo@colegio.edu.co',
+    example: 'nuevo@ejemplo.test',
     description: 'Queda pendiente hasta confirmarlo con el enlace',
   })
   @Transform(({ value }: { value: unknown }) =>

@@ -6,7 +6,7 @@ export class InstitutionResponseDto {
   @ApiProperty({ format: 'uuid' })
   id: string;
 
-  @ApiProperty()
+  @ApiProperty({ description: 'NIT de la institución' })
   nit: string;
 
   @ApiProperty()

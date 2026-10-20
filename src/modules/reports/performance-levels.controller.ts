@@ -1,7 +1,6 @@
 import { Body, Controller, Get, Put } from '@nestjs/common';
 import {
   ApiBadRequestResponse,
-  ApiCookieAuth,
   ApiForbiddenResponse,
   ApiOkResponse,
   ApiOperation,
@@ -20,7 +19,6 @@ import {
 } from './performance-levels.service';
 
 @ApiTags('performance-levels')
-@ApiCookieAuth('access_token')
 @ApiForbiddenResponse({ description: 'Sin permiso para esta acción' })
 @Controller('performance-levels')
 export class PerformanceLevelsController {

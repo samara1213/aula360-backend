@@ -63,7 +63,10 @@ export class CreateEvaluationDto {
 }
 
 export class UpdateEvaluationDto {
-  @ApiPropertyOptional({ maxLength: 200 })
+  @ApiPropertyOptional({
+    description: 'Título de la evaluación',
+    maxLength: 200,
+  })
   @IsOptional()
   @Transform(trim)
   @IsString()
@@ -88,22 +91,34 @@ export class UpdateEvaluationDto {
 }
 
 export class EvaluationQueryDto extends PaginationDto {
-  @ApiPropertyOptional({ format: 'uuid' })
+  @ApiPropertyOptional({
+    description: 'Solo las evaluaciones de esta carga docente',
+    format: 'uuid',
+  })
   @IsOptional()
   @IsUUID()
   teacherAssignmentId?: string;
 
-  @ApiPropertyOptional({ format: 'uuid' })
+  @ApiPropertyOptional({
+    description: 'Solo las evaluaciones de este periodo',
+    format: 'uuid',
+  })
   @IsOptional()
   @IsUUID()
   periodId?: string;
 
-  @ApiPropertyOptional({ format: 'uuid' })
+  @ApiPropertyOptional({
+    description: 'Solo las evaluaciones de este curso',
+    format: 'uuid',
+  })
   @IsOptional()
   @IsUUID()
   courseId?: string;
 
-  @ApiPropertyOptional({ format: 'uuid' })
+  @ApiPropertyOptional({
+    description: 'Solo las evaluaciones de esta asignatura',
+    format: 'uuid',
+  })
   @IsOptional()
   @IsUUID()
   subjectId?: string;
@@ -152,7 +167,7 @@ export class EvaluationResponseDto {
   @ApiProperty({ format: 'uuid' })
   id: string;
 
-  @ApiProperty()
+  @ApiProperty({ description: 'Título de la evaluación' })
   title: string;
 
   @ApiProperty({ example: 20 })

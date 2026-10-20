@@ -11,7 +11,6 @@ import {
 import {
   ApiBadRequestResponse,
   ApiConflictResponse,
-  ApiCookieAuth,
   ApiCreatedResponse,
   ApiForbiddenResponse,
   ApiNotFoundResponse,
@@ -38,7 +37,6 @@ const RULES =
   'El año lectivo del curso debe estar activo, el estudiante activo y su sede debe ser la del curso. Quien está limitado a sedes solo gestiona las matrículas de los cursos de esas sedes.';
 
 @ApiTags('enrollments')
-@ApiCookieAuth('access_token')
 @ApiForbiddenResponse({ description: 'Sin permiso para esta acción' })
 @Controller('enrollments')
 export class EnrollmentsController {
