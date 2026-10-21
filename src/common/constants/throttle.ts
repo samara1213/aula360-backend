@@ -33,6 +33,43 @@ export const LOGIN_ACCOUNT_THROTTLE: ThrottlerOptions = {
 /** Aplica LOGIN_ACCOUNT_THROTTLE a la ruta. */
 export const AccountThrottle = () => SetMetadata(ACCOUNT_THROTTLE_KEY, true);
 
+const REFRESH_TOKEN_THROTTLE_KEY = 'refreshTokenThrottle';
+const REFRESH_COOKIES = ['refresh_token', '__Secure-refresh_token'];
+
+/**
+ * Renovación de sesión: 10 por minuto por refresh token (su hash). Un uso
+ * legítimo renueva una vez cada 15 minutos; así el límite por IP puede ser
+ * alto y un colegio detrás de una sola IP pública no expulsa a sus usuarios
+ * (M4 de la fase 3a). Sin cookie cuenta por IP.
+ */
+export const REFRESH_TOKEN_THROTTLE: ThrottlerOptions = {
+  name: 'refresh-token',
+  ttl: 60_000,
+  limit: 10,
+  getTracker: (req: Record<string, unknown>) => {
+    const cookies = req.cookies as Record<string, unknown> | undefined;
+    const token = REFRESH_COOKIES.map((name) => cookies?.[name]).find(
+      (value): value is string => typeof value === 'string' && value !== '',
+    );
+    return token
+      ? `refresh:${createHash('sha256').update(token).digest('hex')}`
+      : `ip:${String(req.ip)}`;
+  },
+  skipIf: (context: ExecutionContext) =>
+    process.env.THROTTLE_DISABLED === 'true' ||
+    !Reflect.getMetadata(REFRESH_TOKEN_THROTTLE_KEY, context.getHandler()),
+};
+
+/** Aplica REFRESH_TOKEN_THROTTLE a la ruta. */
+export const RefreshTokenThrottle = () =>
+  SetMetadata(REFRESH_TOKEN_THROTTLE_KEY, true);
+
+/**
+ * Límite por IP de la renovación: alto, porque muchos equipos de un colegio
+ * comparten IP pública; el freno real es REFRESH_TOKEN_THROTTLE.
+ */
+export const REFRESH_IP_THROTTLE = { default: { ttl: 60_000, limit: 300 } };
+
 /**
  * Límite estricto para login y recuperación de contraseña.
  * Uso: @Throttle(STRICT_AUTH_THROTTLE)

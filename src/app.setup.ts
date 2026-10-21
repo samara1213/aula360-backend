@@ -6,6 +6,7 @@ import helmet from 'helmet';
 import { bodyParserMiddlewares } from './common/middleware/body-parser.middleware';
 import { originCheckMiddleware } from './common/middleware/origin-check.middleware';
 import { createOpenApiDocument } from './common/swagger/openapi';
+import { noStoreMiddleware } from './common/middleware/no-store.middleware';
 import { uploadSizeMiddleware } from './common/middleware/upload-size.middleware';
 import { MULTIPART_MAX_BYTES } from './storage/storage.constants';
 
@@ -35,6 +36,7 @@ export function configureApp(app: INestApplication): void {
   }
 
   app.use(helmet());
+  app.use(`/${API_PREFIX}`, noStoreMiddleware());
   // Subidas demasiado grandes: se rechazan sin leer el cuerpo.
   app.use(uploadSizeMiddleware(MULTIPART_MAX_BYTES));
   app.use(...bodyParserMiddlewares());

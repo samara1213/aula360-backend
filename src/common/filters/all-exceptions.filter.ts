@@ -72,6 +72,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
 
     let status: number = HttpStatus.INTERNAL_SERVER_ERROR;
     let message: string | string[] = 'Error interno del servidor';
+    let code: string | undefined;
 
     const clientStatus = clientErrorStatus(exception);
 
@@ -83,6 +84,12 @@ export class AllExceptionsFilter implements ExceptionFilter {
           ? body
           : ((body as { message?: string | string[] }).message ??
             exception.message);
+      // Código estable (ERROR_CODES) para que el cliente no compare textos.
+      const bodyCode =
+        typeof body === 'object'
+          ? (body as { code?: unknown }).code
+          : undefined;
+      if (typeof bodyCode === 'string') code = bodyCode;
       if (status >= 500) {
         this.logger.error(`HttpException ${status}`, exception.stack);
       }
@@ -113,6 +120,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
       statusCode: status,
       message,
       error: HttpStatus[status] ?? 'Error',
+      ...(code ? { code } : {}),
       path: req.url,
       timestamp: new Date().toISOString(),
     });

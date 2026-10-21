@@ -1,4 +1,4 @@
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 /** Cuerpo de todo error (AllExceptionsFilter y la verificación de Origin). */
 export class ErrorResponseDto {
@@ -18,6 +18,13 @@ export class ErrorResponseDto {
     example: 'NOT_FOUND',
   })
   error: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Código estable del error para el cliente (p. ej. PASSWORD_CHANGE_REQUIRED, REFRESH_TOKEN_ROTATED). Solo en algunos errores.',
+    example: 'PASSWORD_CHANGE_REQUIRED',
+  })
+  code?: string;
 
   @ApiProperty({
     description: 'Ruta pedida (con su query string)',

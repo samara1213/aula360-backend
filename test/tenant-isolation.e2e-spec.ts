@@ -1876,11 +1876,12 @@ describe('Aislamiento entre instituciones (e2e)', () => {
       // El access token de A deja de servir en cualquier ruta.
       await dual.get(`/api/courses/${a.course}`).expect(401);
       await dual.get('/api/auth/me').expect(401);
-      // Al renovar la sesión ya no queda en A, y su acceso a B sigue intacto.
+      // Al renovar la sesión queda sin institución activa (no pasa a B en
+      // silencio: M1 de la fase 3a) y su acceso a B sigue intacto.
       await dual.post('/api/auth/refresh-token').expect(204);
       const me = await dual.get('/api/auth/me').expect(200);
-      expect(me.body.activeInstitutionId).not.toBe(a.institution.id);
-      await dual.get(`/api/courses/${a.course}`).expect(404);
+      expect(me.body.activeInstitutionId).toBeNull();
+      await dual.get(`/api/courses/${a.course}`).expect(403);
       await dual
         .post('/api/auth/switch-institution')
         .send({ institutionId: b.institution.id })

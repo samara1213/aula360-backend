@@ -6,6 +6,7 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { QueryFailedError } from 'typeorm';
+import { PasswordChangeRequiredException } from '../constants/error-codes';
 import { AllExceptionsFilter } from './all-exceptions.filter';
 
 function createHost() {
@@ -46,6 +47,24 @@ describe('AllExceptionsFilter', () => {
         path: '/api/test',
       }),
     );
+  });
+
+  it('incluye el código estable del error cuando lo hay (B4 de la fase 3a)', () => {
+    const { host, status, json } = createHost();
+    filter.catch(new PasswordChangeRequiredException(), host);
+    expect(status).toHaveBeenCalledWith(403);
+    expect(json).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: 'Debe cambiar la contraseña',
+        code: 'PASSWORD_CHANGE_REQUIRED',
+      }),
+    );
+  });
+
+  it('sin código no agrega el campo', () => {
+    const { host, json } = createHost();
+    filter.catch(new NotFoundException('x'), host);
+    expect(json.mock.calls[0][0]).not.toHaveProperty('code');
   });
 
   it('conserva la lista de errores de validación', () => {

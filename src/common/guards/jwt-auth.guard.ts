@@ -1,7 +1,6 @@
 import {
   CanActivate,
   ExecutionContext,
-  ForbiddenException,
   Injectable,
   UnauthorizedException,
 } from '@nestjs/common';
@@ -21,6 +20,7 @@ import {
   AuthUser,
 } from '../interfaces/auth-user.interface';
 import { ACTIVE_ASSIGNMENT_CONDITION } from '../../modules/security/active-assignment';
+import { PasswordChangeRequiredException } from '../constants/error-codes';
 
 /**
  * Guard global: exige un access token válido en la cookie, que el usuario siga
@@ -83,7 +83,7 @@ export class JwtAuthGuard implements CanActivate {
         targets,
       )
     ) {
-      throw new ForbiddenException('Debe cambiar la contraseña');
+      throw new PasswordChangeRequiredException();
     }
 
     req.user = {

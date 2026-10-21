@@ -36,11 +36,19 @@ import { TokenService } from './token.service';
 import { EmailVerificationService } from './email-verification.service';
 import { escapeHtml } from '../../common/utils/escape-html';
 import { ACTIVE_ASSIGNMENT_CONDITION } from '../security/active-assignment';
+import { RefreshTokenRotatedException } from '../../common/constants/error-codes';
 
 export const INVALID_CREDENTIALS = 'Credenciales inválidas';
 const RESET_TOKEN_TTL_MS = 30 * 60 * 1000;
 /** Evita llenar de correos a una víctima: un enlace nuevo cada 2 minutos como máximo. */
 const RESET_REQUEST_COOLDOWN_MS = 2 * 60 * 1000;
+/**
+ * Margen tras rotar un refresh token: si el mismo token vuelve a llegar en ese
+ * lapso es una carrera (dos pestañas renovando a la vez), no un robo, y no se
+ * cierran todas las sesiones (A1 de la fase 3a). Corto a propósito: dentro de
+ * él, la reutilización por un atacante no se detecta.
+ */
+export const REFRESH_REUSE_GRACE_MS = 10_000;
 
 export interface IssuedTokens {
   accessToken: string;
@@ -203,7 +211,12 @@ export class AuthService implements OnModuleInit {
     });
     if (!stored) throw new UnauthorizedException();
 
-    if (stored.revokedAt) return this.handleReuse(stored.userId);
+    if (stored.revokedAt) {
+      if (Date.now() - stored.revokedAt.getTime() < REFRESH_REUSE_GRACE_MS) {
+        throw new RefreshTokenRotatedException();
+      }
+      return this.handleReuse(stored.userId);
+    }
     if (stored.expiresAt.getTime() <= Date.now()) {
       throw new UnauthorizedException();
     }
@@ -230,7 +243,8 @@ export class AuthService implements OnModuleInit {
       return this.issueTokens(manager, user.id, institutionId);
     });
 
-    if (tokens === 'reused') return this.handleReuse(stored.userId);
+    // Otra petición lo revocó entre la lectura y la revocación: carrera.
+    if (tokens === 'reused') throw new RefreshTokenRotatedException();
     if (tokens === 'inactive') throw new UnauthorizedException();
     return tokens;
   }
@@ -247,21 +261,25 @@ export class AuthService implements OnModuleInit {
     rawAccessToken: string | undefined,
   ): Promise<string | null> {
     const institutions = await this.getMemberships(userId, manager);
+    let previous: { sub: string; institutionId?: string | null } | null = null;
     if (rawAccessToken) {
       try {
-        const previous = await this.tokens.verifyAccessToken(rawAccessToken, {
+        previous = await this.tokens.verifyAccessToken(rawAccessToken, {
           ignoreExpiration: true,
         });
-        if (
-          previous.sub === userId &&
-          previous.institutionId &&
-          institutions.some((i) => i.id === previous.institutionId)
-        ) {
-          return previous.institutionId;
-        }
       } catch {
         // Token alterado o de otro secreto: se ignora.
       }
+    }
+    const previousInstitution =
+      previous?.sub === userId ? previous.institutionId : null;
+    if (previousInstitution) {
+      // Si ya no pertenece a ella, no se elige otra en silencio: la petición
+      // que el cliente repite tras renovar se ejecutaría en otra institución.
+      // Queda sin institución activa y debe elegir (M1 de la fase 3a).
+      return institutions.some((i) => i.id === previousInstitution)
+        ? previousInstitution
+        : null;
     }
     return institutions.length === 1 ? institutions[0].id : null;
   }

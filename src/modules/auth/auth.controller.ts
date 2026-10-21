@@ -26,8 +26,11 @@ import {
   CURRENT_PASSWORD_THROTTLE,
   SENSITIVE_ACTION_THROTTLE,
   AccountThrottle,
+  REFRESH_IP_THROTTLE,
+  RefreshTokenThrottle,
   STRICT_AUTH_THROTTLE,
 } from '../../common/constants/throttle';
+import { RefreshTokenRotatedException } from '../../common/constants/error-codes';
 import { AllowPendingPasswordChange } from '../../common/decorators/allow-pending-password-change.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { Public } from '../../common/decorators/public.decorator';
@@ -130,7 +133,8 @@ export class AuthController {
   }
 
   @Public()
-  @Throttle({ default: { ttl: 60_000, limit: 30 } })
+  @Throttle(REFRESH_IP_THROTTLE)
+  @RefreshTokenThrottle()
   @Post('refresh-token')
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({
@@ -140,7 +144,7 @@ export class AuthController {
   @ApiNoContentResponse()
   @ApiUnauthorizedResponse({
     description:
-      'Refresh token inválido, vencido o reutilizado. Reutilizar uno ya usado cierra todas las sesiones del usuario: hacer una sola renovación a la vez',
+      'Refresh token inválido, vencido o reutilizado. Reutilizar uno ya usado cierra todas las sesiones del usuario: hacer una sola renovación a la vez. Si se reutiliza en los 10 s siguientes a su rotación (carrera entre pestañas) responde con code REFRESH_TOKEN_ROTATED, sin cerrar sesiones ni borrar cookies: repetir la petición original.',
   })
   async refresh(
     @Req() req: Request,
@@ -155,7 +159,11 @@ export class AuthController {
     } catch (error) {
       // Solo una sesión inválida borra las cookies; un fallo del servidor
       // (p. ej. sin conexiones libres) no cierra la sesión (M2 de la fase 11e).
-      if (error instanceof UnauthorizedException) {
+      // Tampoco una carrera entre pestañas: la otra ya dejó las cookies nuevas.
+      if (
+        error instanceof UnauthorizedException &&
+        !(error instanceof RefreshTokenRotatedException)
+      ) {
         clearAuthCookies(res, this.tokens.secureCookies);
       }
       throw error;

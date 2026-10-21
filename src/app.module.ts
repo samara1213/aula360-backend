@@ -7,6 +7,7 @@ import { HealthController } from './health.controller';
 import {
   DEFAULT_THROTTLE,
   LOGIN_ACCOUNT_THROTTLE,
+  REFRESH_TOKEN_THROTTLE,
 } from './common/constants/throttle';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 import { validateEnv } from './config/env.validation';
@@ -44,7 +45,11 @@ import { StorageModule } from './storage/storage.module';
         }),
     }),
     ThrottlerModule.forRoot({
-      throttlers: [DEFAULT_THROTTLE, LOGIN_ACCOUNT_THROTTLE],
+      throttlers: [
+        DEFAULT_THROTTLE,
+        LOGIN_ACCOUNT_THROTTLE,
+        REFRESH_TOKEN_THROTTLE,
+      ],
       // Solo para pruebas e2e (nunca en producción: lo bloquea la validación de entorno).
       skipIf: () => process.env.THROTTLE_DISABLED === 'true',
     }),

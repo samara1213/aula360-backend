@@ -5,7 +5,12 @@ import { DataSource, Repository } from 'typeorm';
 import { MailService } from '../mail/mail.service';
 import { UserInstitutionRoleEntity } from '../security/entities/user-institution-role.entity';
 import { UserEntity } from '../users/entities/user.entity';
-import { AuthService, INVALID_CREDENTIALS } from './auth.service';
+import { RefreshTokenRotatedException } from '../../common/constants/error-codes';
+import {
+  AuthService,
+  INVALID_CREDENTIALS,
+  REFRESH_REUSE_GRACE_MS,
+} from './auth.service';
 import { EmailVerificationService } from './email-verification.service';
 import { PasswordResetTokenEntity } from './entities/password-reset-token.entity';
 import { RefreshTokenEntity } from './entities/refresh-token.entity';
@@ -223,7 +228,7 @@ describe('AuthService', () => {
       refreshRepo.findOne.mockResolvedValue({
         id: 't1',
         userId: 'u1',
-        revokedAt: new Date(),
+        revokedAt: new Date(Date.now() - REFRESH_REUSE_GRACE_MS - 1_000),
         expiresAt: new Date(Date.now() + 60_000),
       });
       await expect(service.refresh('raw', undefined)).rejects.toBeInstanceOf(
@@ -233,6 +238,20 @@ describe('AuthService', () => {
         expect.objectContaining({ userId: 'u1' }),
         { revokedAt: expect.any(Date) as Date },
       );
+    });
+
+    it('dentro del margen tras rotarlo es una carrera: 401 sin cerrar sesiones (A1 de la fase 3a)', async () => {
+      const { service, refreshRepo } = setup();
+      refreshRepo.findOne.mockResolvedValue({
+        id: 't1',
+        userId: 'u1',
+        revokedAt: new Date(Date.now() - 2_000),
+        expiresAt: new Date(Date.now() + 60_000),
+      });
+      await expect(service.refresh('raw', undefined)).rejects.toBeInstanceOf(
+        RefreshTokenRotatedException,
+      );
+      expect(refreshRepo.update).not.toHaveBeenCalled();
     });
 
     it('rechaza un token vencido sin emitir uno nuevo', async () => {
@@ -249,7 +268,7 @@ describe('AuthService', () => {
       expect(refreshRepo.insert).not.toHaveBeenCalled();
     });
 
-    it('si la revocación atómica no afecta filas (carrera) lo trata como reutilización', async () => {
+    it('si la revocación atómica no afecta filas (carrera) responde 401 sin cerrar sesiones', async () => {
       const { service, refreshRepo } = setup();
       refreshRepo.findOne.mockResolvedValue({
         id: 't1',
@@ -259,9 +278,11 @@ describe('AuthService', () => {
       });
       refreshRepo.update.mockResolvedValueOnce({ affected: 0 });
       await expect(service.refresh('raw', undefined)).rejects.toBeInstanceOf(
-        UnauthorizedException,
+        RefreshTokenRotatedException,
       );
       expect(refreshRepo.insert).not.toHaveBeenCalled();
+      // Solo la revocación atómica: no se revocan todos los del usuario.
+      expect(refreshRepo.update).toHaveBeenCalledTimes(1);
     });
 
     it('descarta la institución del token anterior si ya no pertenece a ella', async () => {
@@ -292,6 +313,46 @@ describe('AuthService', () => {
         institutionId: null,
         sid: expect.any(String) as string,
       });
+    });
+
+    it('si ya no pertenece a la institución anterior no elige la única que le queda (M1 de la fase 3a)', async () => {
+      const { service, refreshRepo, tokens } = setup({
+        memberships: [{ id: 'b', name: 'B', role: 'TEACHER' }],
+      });
+      refreshRepo.findOne.mockResolvedValue({
+        id: 't1',
+        userId: 'u1',
+        revokedAt: null,
+        expiresAt: new Date(Date.now() + 60_000),
+      });
+      tokens.verifyAccessToken.mockResolvedValue({
+        sub: 'u1',
+        institutionId: 'a',
+      });
+      await service.refresh('raw', 'old-jwt');
+      expect(tokens.signAccessToken).toHaveBeenCalledWith(
+        expect.objectContaining({ institutionId: null }),
+      );
+    });
+
+    it('sin institución previa y con una sola, la fija', async () => {
+      const { service, refreshRepo, tokens } = setup({
+        memberships: [{ id: 'b', name: 'B', role: 'TEACHER' }],
+      });
+      refreshRepo.findOne.mockResolvedValue({
+        id: 't1',
+        userId: 'u1',
+        revokedAt: null,
+        expiresAt: new Date(Date.now() + 60_000),
+      });
+      tokens.verifyAccessToken.mockResolvedValue({
+        sub: 'u1',
+        institutionId: null,
+      });
+      await service.refresh('raw', 'old-jwt');
+      expect(tokens.signAccessToken).toHaveBeenCalledWith(
+        expect.objectContaining({ institutionId: 'b' }),
+      );
     });
 
     it('rechaza si el usuario quedó inactivo, sin emitir tokens', async () => {

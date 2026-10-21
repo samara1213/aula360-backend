@@ -252,6 +252,13 @@ describe('Auth (e2e)', () => {
       const newRefresh = findCookie(rotated.headers, 'refresh_token')!.split(
         ';',
       )[0];
+      // Fuera del margen de carrera entre pestañas (REFRESH_REUSE_GRACE_MS).
+      await ctx.dataSource.query(
+        `UPDATE refresh_tokens
+            SET revoked_at = revoked_at - interval '1 minute'
+          WHERE user_id = $1 AND revoked_at IS NOT NULL`,
+        [admin.id],
+      );
 
       await request(server())
         .post('/api/auth/refresh-token')
@@ -267,6 +274,68 @@ describe('Auth (e2e)', () => {
 
     it('sin cookie responde 401', async () => {
       await request(server()).post('/api/auth/refresh-token').expect(401);
+    });
+
+    it('dos renovaciones casi simultáneas no cierran las sesiones (A1 de la fase 3a)', async () => {
+      const user = await ctx.data.createUser();
+      await ctx.data.assignGlobalRole(user.id, institutionA.id);
+      const { res: loginRes } = await loginAgent(user.email!);
+      const oldRefresh = findCookie(loginRes.headers, 'refresh_token')!.split(
+        ';',
+      )[0];
+
+      const first = await request(server())
+        .post('/api/auth/refresh-token')
+        .set('Cookie', oldRefresh)
+        .expect(204);
+      const second = await request(server())
+        .post('/api/auth/refresh-token')
+        .set('Cookie', oldRefresh)
+        .expect(401);
+      expect(second.body.code).toBe('REFRESH_TOKEN_ROTATED');
+      // No borra las cookies que la primera ya dejó en el navegador.
+      expect(findCookie(second.headers, 'refresh_token')).toBeUndefined();
+
+      const newRefresh = findCookie(first.headers, 'refresh_token')!.split(
+        ';',
+      )[0];
+      await request(server())
+        .post('/api/auth/refresh-token')
+        .set('Cookie', newRefresh)
+        .expect(204);
+      expect(await ctx.data.activeRefreshTokens(user.id)).toBe(1);
+    });
+
+    it('si lo retiran de la institución activa no pasa a la otra en silencio (M1 de la fase 3a)', async () => {
+      const user = await ctx.data.createUser({ userType: 'TEACHER' });
+      await ctx.data.assignGlobalRole(user.id, institutionA.id, 'TEACHER');
+      await ctx.data.assignGlobalRole(user.id, institutionB.id, 'TEACHER');
+      const { agent } = await loginAgent(user.email!);
+      await agent
+        .post('/api/auth/switch-institution')
+        .send({ institutionId: institutionA.id })
+        .expect(200);
+
+      await ctx.dataSource.query(
+        'DELETE FROM user_institution_roles WHERE user_id = $1 AND institution_id = $2',
+        [user.id, institutionA.id],
+      );
+      // El access token con A ya no vale; la renovación no elige B por su cuenta.
+      await agent.get('/api/auth/me').expect(401);
+      await agent.post('/api/auth/refresh-token').expect(204);
+      const me = await agent.get('/api/auth/me').expect(200);
+      expect(me.body.activeInstitutionId).toBeNull();
+      expect(me.body.institutions).toHaveLength(1);
+    });
+  });
+
+  describe('Cache-Control (B6 de la fase 3a)', () => {
+    it('las respuestas de la API no se guardan en caché', async () => {
+      const { agent } = await loginAgent(admin.email!);
+      const me = await agent.get('/api/auth/me').expect(200);
+      expect(me.headers['cache-control']).toBe('no-store');
+      const error = await request(server()).get('/api/auth/me').expect(401);
+      expect(error.headers['cache-control']).toBe('no-store');
     });
   });
 
@@ -354,7 +423,8 @@ describe('Auth (e2e)', () => {
         .expect(204);
       await ctx.dataSource.query(
         `UPDATE refresh_tokens
-            SET expires_at = CURRENT_TIMESTAMP - interval '29 days'
+            SET expires_at = CURRENT_TIMESTAMP - interval '29 days',
+                revoked_at = revoked_at - interval '1 minute'
           WHERE user_id = $1 AND revoked_at IS NOT NULL`,
         [user.id],
       );
@@ -455,10 +525,12 @@ describe('Auth (e2e)', () => {
       expect(res.body.user.mustChangePassword).toBe(true);
 
       await agent.get('/api/auth/me').expect(200);
-      await agent
+      const blocked = await agent
         .post('/api/auth/switch-institution')
         .send({ institutionId: institutionA.id })
         .expect(403);
+      // Código estable para el cliente (B4 de la fase 3a).
+      expect(blocked.body.code).toBe('PASSWORD_CHANGE_REQUIRED');
 
       await agent
         .post('/api/auth/change-password')
