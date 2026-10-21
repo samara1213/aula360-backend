@@ -100,6 +100,13 @@ export class MyMenuNodeDto {
   @ApiProperty({ type: MenuNodePermissionsDto })
   permissions: MenuNodePermissionsDto;
 
+  @ApiProperty({
+    type: MenuNodePermissionsDto,
+    description:
+      'Los permisos que valen en toda la institución (sin contar los de roles limitados a una sede). Las acciones que exigen alcance de toda la institución (logo, sedes, roles) se muestran según estos.',
+  })
+  institutionWide: MenuNodePermissionsDto;
+
   @ApiProperty({ type: () => [MyMenuNodeDto] })
   children: MyMenuNodeDto[];
 }

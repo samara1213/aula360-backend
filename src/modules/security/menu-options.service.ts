@@ -123,12 +123,19 @@ export class MenuOptionsService {
    * Menú del usuario en la institución activa: opciones permitidas por sus
    * roles vigentes (permisos sumados) más sus ancestros, sin ramas inactivas.
    * Sin institución activa (p. ej. SUPER_ADMIN) devuelve un árbol vacío.
+   * institutionWide: lo mismo contando solo las asignaciones sin sede, para que
+   * el frontend no ofrezca acciones que exigen toda la institución.
    */
   async myMenu(user: AuthUser): Promise<MyMenuNodeDto[]> {
     if (!user.institutionId) return [];
-    const [options, granted] = await Promise.all([
+    const [options, granted, wide] = await Promise.all([
       this.menus.find({ order: ORDER }),
       this.permissions.effective(user.userId, user.institutionId),
+      this.permissions.effective(
+        user.userId,
+        user.institutionId,
+        'institution',
+      ),
     ]);
     const byId = new Map(options.map((option) => [option.id, option]));
     const parentOf = new Map(options.map((o) => [o.id, o.parentId]));
@@ -147,6 +154,7 @@ export class MenuOptionsService {
       options.filter((option) => included.has(option.id)),
       (option) => {
         const perms = granted.get(option.id);
+        const widePerms = wide.get(option.id);
         return {
           id: option.id,
           name: option.name,
@@ -158,6 +166,12 @@ export class MenuOptionsService {
             create: perms?.canCreate ?? false,
             update: perms?.canUpdate ?? false,
             delete: perms?.canDelete ?? false,
+          },
+          institutionWide: {
+            view: widePerms !== undefined,
+            create: widePerms?.canCreate ?? false,
+            update: widePerms?.canUpdate ?? false,
+            delete: widePerms?.canDelete ?? false,
           },
           children: [],
         };

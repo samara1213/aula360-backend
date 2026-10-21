@@ -189,6 +189,32 @@ describe('MenuOptionsService', () => {
       expect(permissions.effective).toHaveBeenCalledWith('user-1', 'inst-A');
     });
 
+    it('institutionWide cuenta solo lo que vale en toda la institución', async () => {
+      // Ve y edita a11 en su sede, pero en toda la institución solo la ve.
+      permissions.effective.mockImplementation(
+        (_user: string, _inst: string, target?: string) =>
+          Promise.resolve(
+            new Map([['a11', target === 'institution' ? VIEW : FULL]]),
+          ),
+      );
+      const tree = await service.myMenu(user);
+      const leaf = tree[0].children[0].children[0];
+      expect(leaf.permissions.update).toBe(true);
+      expect(leaf.institutionWide).toEqual({
+        view: true,
+        create: false,
+        update: false,
+        delete: false,
+      });
+      // Un ancestro que solo agrupa no tiene permisos en ningún alcance.
+      expect(tree[0].institutionWide.view).toBe(false);
+      expect(permissions.effective).toHaveBeenCalledWith(
+        'user-1',
+        'inst-A',
+        'institution',
+      );
+    });
+
     it('excluye la rama de un ancestro inactivo', async () => {
       rows[0].isActive = false; // a inactiva
       permissions.effective.mockResolvedValue(

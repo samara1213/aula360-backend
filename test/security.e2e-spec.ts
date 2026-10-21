@@ -12,15 +12,18 @@ import { TEST_PASSWORD } from './utils/test-data';
 
 type Agent = ReturnType<typeof request.agent>;
 
+interface MenuPermissions {
+  view: boolean;
+  create: boolean;
+  update: boolean;
+  delete: boolean;
+}
+
 interface MenuNode {
   id: string;
   slug: string;
-  permissions: {
-    view: boolean;
-    create: boolean;
-    update: boolean;
-    delete: boolean;
-  };
+  permissions: MenuPermissions;
+  institutionWide: MenuPermissions;
   children: MenuNode[];
 }
 
@@ -314,6 +317,27 @@ describe('Roles, permisos y menús (e2e)', () => {
       expect(
         findNode(tree, 'evaluations.evaluations')?.permissions.delete,
       ).toBe(true);
+      // Administra solo una sede: en toda la institución no tiene esos permisos.
+      expect(findNode(tree, 'institution.campuses')).toMatchObject({
+        permissions: { view: true, create: true, update: true, delete: true },
+        institutionWide: {
+          view: false,
+          create: false,
+          update: false,
+          delete: false,
+        },
+      });
+      // Notas: en su sede también borra (administrador); en toda la
+      // institución, solo lo de su rol de docente.
+      expect(findNode(tree, 'evaluations.scores')).toMatchObject({
+        permissions: { view: true, create: true, update: true, delete: true },
+        institutionWide: {
+          view: true,
+          create: true,
+          update: true,
+          delete: false,
+        },
+      });
 
       await adminA.patch(`/api/campuses/${campus.id}/deactivate`).expect(200);
       tree = (await agent.get('/api/menu-options/my-menu').expect(200))
