@@ -557,6 +557,13 @@ export class ManagedUsersService implements OnModuleInit {
         lock: true,
       });
       await this.assertCanManage(manager, scope, found.user);
+      // Una cuenta SUPER_ADMIN comprometida no debe poder tomarse las demás:
+      // un SUPER_ADMIN recupera su contraseña solo por su correo.
+      if (found.user.userType === 'SUPER_ADMIN') {
+        throw new ForbiddenException(
+          'Un SUPER_ADMIN recupera su contraseña con «Olvidé mi contraseña»',
+        );
+      }
       await this.assertExclusive(
         manager,
         scope,

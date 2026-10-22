@@ -769,6 +769,10 @@ describe('Aislamiento entre instituciones (e2e)', () => {
     return [
       { route: 'GET /institutions', path: '/institutions' },
       {
+        route: 'GET /users/lookup',
+        path: '/users/lookup?email=nadie%40aula360.test',
+      },
+      {
         route: 'POST /institutions',
         path: '/institutions',
         body: { nit: `E2E-${suffix()}`, name: 'Intrusa' },

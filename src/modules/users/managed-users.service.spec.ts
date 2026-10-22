@@ -550,6 +550,14 @@ describe('ManagedUsersService', () => {
         service.resetTemporaryPassword(institution, 'user-1'),
       ).rejects.toThrow(BadRequestException);
     });
+
+    it('otro SUPER_ADMIN: 403 aunque quien actúa sea SUPER_ADMIN', async () => {
+      membersQb.getOne.mockResolvedValue(target({ userType: 'SUPER_ADMIN' }));
+      await expect(
+        service.resetTemporaryPassword(system, 'user-1'),
+      ).rejects.toThrow(ForbiddenException);
+      expect(userRepo.update).not.toHaveBeenCalled();
+    });
   });
 
   it('system: 404 si la institución no existe', async () => {

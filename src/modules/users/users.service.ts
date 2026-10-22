@@ -1,11 +1,15 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, Repository } from 'typeorm';
+import { DataSource, Not, Repository } from 'typeorm';
 import { ValidatedFile } from '../../storage/image-file.pipe';
 import { SIGNED_URL_TTL_SECONDS } from '../../storage/storage.constants';
 import { StorageDeletionsService } from '../../storage/storage-deletions.service';
 import { StorageService } from '../../storage/storage.service';
 import { AvatarResponseDto } from './dto/avatar-response.dto';
+import {
+  UserLookupQueryDto,
+  UserLookupResponseDto,
+} from './dto/user-lookup.dto';
 import { UserEntity } from './entities/user.entity';
 
 const AVATAR_BUCKET = 'avatars';
@@ -27,6 +31,49 @@ export class UsersService {
     private readonly storage: StorageService,
     private readonly deletions: StorageDeletionsService,
   ) {}
+
+  /**
+   * Busca un usuario activo por correo, o por tipo y número de documento, para
+   * que el SUPER_ADMIN le asigne un rol en otra institución (fase 3b-2). Solo
+   * coincidencia exacta; inactivo, inexistente o SUPER_ADMIN responden igual.
+   */
+  async lookup(query: UserLookupQueryDto): Promise<UserLookupResponseDto> {
+    const byDocument =
+      query.documentType !== undefined && query.documentNumber !== undefined
+        ? {
+            documentType: query.documentType,
+            documentNumber: query.documentNumber,
+          }
+        : undefined;
+    const user = await this.users.findOne({
+      select: {
+        id: true,
+        firstName: true,
+        lastName: true,
+        documentType: true,
+        documentNumber: true,
+        email: true,
+      },
+      where: {
+        ...(byDocument ?? { email: query.email }),
+        isActive: true,
+        userType: Not('SUPER_ADMIN'),
+      },
+    });
+    if (!user) {
+      throw new NotFoundException(
+        'No hay un usuario activo con ese documento o correo',
+      );
+    }
+    return {
+      id: user.id,
+      firstName: user.firstName,
+      lastName: user.lastName,
+      documentType: user.documentType,
+      documentNumber: user.documentNumber,
+      email: user.email,
+    };
+  }
 
   async getAvatar(userId: string): Promise<AvatarResponseDto> {
     const user = await this.users.findOne({

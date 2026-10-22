@@ -6,11 +6,13 @@ import {
   HttpCode,
   HttpStatus,
   Put,
+  Query,
   UploadedFile,
 } from '@nestjs/common';
 import {
   ApiBadRequestResponse,
   ApiConflictResponse,
+  ApiForbiddenResponse,
   ApiNoContentResponse,
   ApiNotFoundResponse,
   ApiOkResponse,
@@ -20,8 +22,10 @@ import {
 import { Throttle } from '@nestjs/throttler';
 import {
   CURRENT_PASSWORD_THROTTLE,
+  SENSITIVE_ACTION_THROTTLE,
   UPLOAD_THROTTLE,
 } from '../../common/constants/throttle';
+import { SuperAdminOnly } from '../../common/decorators/require-permission.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import type { AuthUser } from '../../common/interfaces/auth-user.interface';
 import { ImageFilePipe, ValidatedFile } from '../../storage/image-file.pipe';
@@ -29,6 +33,10 @@ import { ImageUpload } from '../../storage/image-upload.decorator';
 import { ChangeOwnEmailDto } from '../auth/dto/verify-email.dto';
 import { EmailVerificationService } from '../auth/email-verification.service';
 import { AvatarResponseDto } from './dto/avatar-response.dto';
+import {
+  UserLookupQueryDto,
+  UserLookupResponseDto,
+} from './dto/user-lookup.dto';
 import { UsersService } from './users.service';
 
 /** Rutas sobre el propio usuario: siempre el del token, nunca un id del cliente. */
@@ -39,6 +47,26 @@ export class UsersController {
     private readonly users: UsersService,
     private readonly emailVerification: EmailVerificationService,
   ) {}
+
+  // Va en este controller (registrado antes que /users/:id) para que
+  // "lookup" no se tome como un id.
+  @Get('lookup')
+  @SuperAdminOnly()
+  @Throttle(SENSITIVE_ACTION_THROTTLE)
+  @ApiOperation({
+    summary: 'Buscar un usuario activo por correo o documento (SUPER_ADMIN)',
+    description:
+      'Coincidencia exacta: email, o documentType y documentNumber. Para asignarle un rol en otra institución.',
+  })
+  @ApiOkResponse({ type: UserLookupResponseDto })
+  @ApiBadRequestResponse({ description: 'Falta el correo o el documento' })
+  @ApiForbiddenResponse({ description: 'Solo SUPER_ADMIN' })
+  @ApiNotFoundResponse({
+    description: 'No hay un usuario activo con esos datos',
+  })
+  lookup(@Query() query: UserLookupQueryDto): Promise<UserLookupResponseDto> {
+    return this.users.lookup(query);
+  }
 
   // Límite estricto: evita adivinar la contraseña actual con una sesión robada.
   @Put('me/email')

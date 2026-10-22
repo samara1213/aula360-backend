@@ -272,8 +272,12 @@ export class InstitutionUsersController {
   @HttpCode(HttpStatus.OK)
   @Throttle(SENSITIVE_ACTION_THROTTLE)
   @Header('Cache-Control', 'no-store')
-  @ApiOperation({ summary: 'Generar una contraseña temporal nueva' })
+  @ApiOperation({
+    summary: 'Generar una contraseña temporal nueva',
+    description: 'No aplica a cuentas SUPER_ADMIN (recuperan por correo).',
+  })
   @ApiOkResponse({ type: TemporaryPasswordResponseDto })
+  @ApiForbiddenResponse({ description: 'El usuario es SUPER_ADMIN' })
   @ApiBadRequestResponse({ description: 'El usuario está inactivo' })
   @ApiNotFoundResponse({ description: 'Institución o usuario no encontrado' })
   resetTemporaryPassword(

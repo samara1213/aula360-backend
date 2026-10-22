@@ -138,4 +138,48 @@ describe('UsersService (avatar)', () => {
       NotFoundException,
     );
   });
+
+  describe('lookup', () => {
+    const found = {
+      id: 'u-9',
+      firstName: 'Ana',
+      lastName: 'Pérez',
+      documentType: 'CC',
+      documentNumber: '123',
+      email: 'ana@x.co',
+    };
+
+    it('busca por documento completo, solo activos y sin SUPER_ADMIN', async () => {
+      repo.findOne.mockResolvedValue(found);
+      await expect(
+        service.lookup({ documentType: 'CC', documentNumber: '123' }),
+      ).resolves.toEqual(found);
+      const [[{ where }]] = repo.findOne.mock.calls as [
+        [{ where: Record<string, unknown> }],
+      ];
+      expect(where).toMatchObject({
+        documentType: 'CC',
+        documentNumber: '123',
+        isActive: true,
+      });
+      expect(where).not.toHaveProperty('email');
+      expect(where.userType).toBeDefined();
+    });
+
+    it('busca por correo cuando no llega el documento', async () => {
+      repo.findOne.mockResolvedValue(found);
+      await service.lookup({ email: 'ana@x.co' });
+      const [[{ where }]] = repo.findOne.mock.calls as [
+        [{ where: Record<string, unknown> }],
+      ];
+      expect(where).toMatchObject({ email: 'ana@x.co', isActive: true });
+    });
+
+    it('404 si no hay coincidencia', async () => {
+      repo.findOne.mockResolvedValue(null);
+      await expect(service.lookup({ email: 'x@x.co' })).rejects.toBeInstanceOf(
+        NotFoundException,
+      );
+    });
+  });
 });

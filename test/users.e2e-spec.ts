@@ -39,6 +39,7 @@ describe('Usuarios (e2e)', () => {
   let teacherBothUser: UserEntity; // TEACHER en campusA1 y campusA2
   let sharedUser: UserEntity; // TEACHER en A (campusA1) y en B
   let noAvatarUser: UserEntity;
+  let superUser: UserEntity;
 
   let superAdmin: Agent;
   let adminA: Agent;
@@ -90,7 +91,7 @@ describe('Usuarios (e2e)', () => {
     globalRoles = Object.fromEntries(roles.map((r) => [r.name, r.id]));
     roleB = await data.createInstitutionRole(institutionB.id, ['people']);
 
-    const superUser = await data.createUser({ userType: 'SUPER_ADMIN' });
+    superUser = await data.createUser({ userType: 'SUPER_ADMIN' });
     adminAUser = await data.createUser();
     await data.assignGlobalRole(adminAUser.id, institutionA.id);
     const adminBUser = await data.createUser();
@@ -640,6 +641,15 @@ describe('Usuarios (e2e)', () => {
         .get(`/api/institutions/${institutionA.id}/users/${hiddenSuper.id}`)
         .expect(200);
     });
+
+    it('otro SUPER_ADMIN no le genera contraseña temporal: 403', async () => {
+      const res = await superAdmin
+        .post(
+          `/api/institutions/${institutionA.id}/users/${hiddenSuper.id}/temporary-password`,
+        )
+        .expect(403);
+      expect(res.body).not.toHaveProperty('temporaryPassword');
+    });
   });
 
   describe('administrador de sede sobre un usuario exclusivo de su sede', () => {
@@ -783,6 +793,87 @@ describe('Usuarios (e2e)', () => {
         `/api/institutions/${randomUUID()}/users`,
       );
       expect(res.status).toBe(404);
+    });
+  });
+
+  describe('GET /users/lookup (SUPER_ADMIN)', () => {
+    const lookup = (agent: Agent, query: Record<string, string>) =>
+      agent.get('/api/users/lookup').query(query);
+
+    it('encuentra un usuario activo por correo (sin distinguir mayúsculas) o por documento', async () => {
+      const expected = {
+        id: sharedUser.id,
+        firstName: sharedUser.firstName,
+        lastName: sharedUser.lastName,
+        documentType: sharedUser.documentType,
+        documentNumber: sharedUser.documentNumber,
+        email: sharedUser.email,
+      };
+      const byEmail = await lookup(superAdmin, {
+        email: ` ${String(sharedUser.email).toUpperCase()} `,
+      }).expect(200);
+      expect(byEmail.body).toEqual(expected);
+
+      const byDocument = await lookup(superAdmin, {
+        documentType: 'cc',
+        documentNumber: sharedUser.documentNumber,
+      }).expect(200);
+      expect(byDocument.body).toEqual(expected);
+    });
+
+    it('404 igual para inexistente, parcial, inactivo o SUPER_ADMIN', async () => {
+      const inactive = await ctx.data.createUser({ isActive: false });
+      const queries: Record<string, string>[] = [
+        { email: 'nadie@aula360.test' },
+        {
+          documentType: 'CC',
+          documentNumber: sharedUser.documentNumber.slice(0, 4),
+        },
+        { email: String(inactive.email) },
+        { email: String(superUser.email) },
+      ];
+      for (const query of queries) {
+        const res = await lookup(superAdmin, query).expect(404);
+        expect(res.body.message).toBe(
+          'No hay un usuario activo con ese documento o correo',
+        );
+      }
+    });
+
+    it('400 sin correo ni documento completo', async () => {
+      await lookup(superAdmin, {}).expect(400);
+      await lookup(superAdmin, { documentNumber: '123' }).expect(400);
+      await lookup(superAdmin, { email: 'no-es-correo' }).expect(400);
+    });
+
+    it('400 con correo y documento a la vez, o con un parámetro repetido', async () => {
+      const both = await lookup(superAdmin, {
+        email: String(sharedUser.email),
+        documentType: 'CC',
+        documentNumber: sharedUser.documentNumber,
+      }).expect(400);
+      expect(JSON.stringify(both.body)).toContain(
+        'Busque por correo o por documento, no por los dos',
+      );
+      await lookup(superAdmin, {
+        email: String(sharedUser.email),
+        documentNumber: sharedUser.documentNumber,
+      }).expect(400);
+      const email = encodeURIComponent(String(sharedUser.email));
+      await superAdmin
+        .get(`/api/users/lookup?email=${email}&email=${email}`)
+        .expect(400);
+      await superAdmin
+        .get(
+          `/api/users/lookup?documentType=CC&documentNumber=${sharedUser.documentNumber}&documentNumber=1`,
+        )
+        .expect(400);
+    });
+
+    it('403 para quien no es SUPER_ADMIN, aunque administre usuarios', async () => {
+      for (const agent of [adminA, managerA, teacherA1]) {
+        await lookup(agent, { email: String(sharedUser.email) }).expect(403);
+      }
     });
   });
 });
