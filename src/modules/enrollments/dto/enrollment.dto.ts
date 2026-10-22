@@ -171,7 +171,7 @@ export class EnrollmentResponseDto {
     type: String,
     nullable: true,
     description:
-      'Solo en el detalle (no en listados). Texto libre sobre un menor: no registrar datos de salud, disciplinarios ni otros datos sensibles.',
+      'Solo en el detalle (no en listados) y para quien puede editar matrículas en la sede del curso. Texto libre sobre un menor: no registrar datos de salud, disciplinarios ni otros datos sensibles.',
   })
   observations?: string | null;
 

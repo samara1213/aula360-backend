@@ -130,12 +130,14 @@ export class TestData {
   }
 
   /**
-   * Rol propio de una institución con permisos completos sobre los slugs dados.
-   * Se borra junto con la institución (sus permisos caen en cascada).
+   * Rol propio de una institución con permisos completos sobre los slugs dados
+   * (con `viewOnly`, solo ver). Se borra junto con la institución (sus
+   * permisos caen en cascada).
    */
   async createInstitutionRole(
     institutionId: string,
     slugs: string[],
+    { viewOnly = false }: { viewOnly?: boolean } = {},
   ): Promise<RoleEntity> {
     const role = await this.ds.getRepository(RoleEntity).save({
       institutionId,
@@ -148,9 +150,9 @@ export class TestData {
       options.map((option) => ({
         roleId: role.id,
         menuOptionId: option.id,
-        canCreate: true,
-        canUpdate: true,
-        canDelete: true,
+        canCreate: !viewOnly,
+        canUpdate: !viewOnly,
+        canDelete: !viewOnly,
       })),
     );
     return role;

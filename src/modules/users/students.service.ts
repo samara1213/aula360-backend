@@ -1,5 +1,6 @@
 import {
   ConflictException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -10,6 +11,7 @@ import {
   SelectQueryBuilder,
 } from 'typeorm';
 import { PermissionAction } from '../../common/decorators/require-permission.decorator';
+import { COURSES_PERMISSION } from '../academic/courses.service';
 import { containsPattern } from '../../common/dto/list-query.dto';
 import {
   paginate,
@@ -126,7 +128,27 @@ export class StudentsService {
       qb.andWhere('s.campus_id = :campusId', { campusId: query.campusId });
     }
     if (query.courseId) {
-      this.filterByCourse(qb, scope, campusScope, teacherView, query.courseId);
+      // Filtrar por curso revela quién está matriculado en él: exige ver
+      // Cursos, y solo en las sedes donde los ve (B1 de la 3d-2).
+      const courseView = await this.permissions.campusScope(
+        scope.user.userId,
+        scope.institutionId,
+        COURSES_PERMISSION,
+        'view',
+      );
+      if (courseView !== null && courseView.length === 0) {
+        throw new ForbiddenException(
+          'Para filtrar por curso necesitas el permiso de ver Cursos',
+        );
+      }
+      this.filterByCourse(
+        qb,
+        scope,
+        campusScope,
+        teacherView,
+        query.courseId,
+        courseView,
+      );
     }
     if (query.isActive !== undefined) {
       qb.andWhere('u.is_active = :isActive', { isActive: query.isActive });
@@ -373,7 +395,7 @@ export class StudentsService {
 
   /**
    * Con matrícula en ese curso, si el curso está a su alcance: de la
-   * institución, de sus sedes y, para un docente, de las sedes de sus otros
+   * institución, de sus sedes (de Estudiantes y de Cursos) y, para un docente, de las sedes de sus otros
    * roles o con su carga activa. Así el filtro no revela matrículas de cursos
    * ajenos.
    */
@@ -383,6 +405,7 @@ export class StudentsService {
     campusScope: CampusScope,
     view: TeacherView | null,
     courseId: string,
+    courseView: CampusScope,
   ): void {
     const conditions = [
       'ce.student_id = s.id',
@@ -393,6 +416,9 @@ export class StudentsService {
       conditions.push(
         campusScope.length ? 'cc.campus_id IN (:...courseCampuses)' : 'false',
       );
+    }
+    if (courseView) {
+      conditions.push('cc.campus_id IN (:...courseView)');
     }
     if (view) {
       const byOtherRoles = view.otherView.length
@@ -409,6 +435,7 @@ export class StudentsService {
         courseId,
         institutionId: scope.institutionId,
         courseCampuses: campusScope,
+        courseView,
         otherView: view?.otherView,
         ownTeacherId: view?.teacherId,
       },

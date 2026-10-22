@@ -123,17 +123,27 @@ export class EnrollmentsService {
     );
   }
 
+  /**
+   * Las observaciones (texto libre sobre un menor) solo van a quien puede
+   * editar matrículas en la sede del curso: con solo ver, el detalle sale sin
+   * ellas (M1 de la 3d-2). Crear y editar sí las devuelven: quien lo hace las
+   * escribió o puede escribirlas.
+   */
   async findOne(user: AuthUser, id: string): Promise<EnrollmentResponseDto> {
     const institutionId = activeInstitutionId(user);
-    const campusScope = await this.campusScope(user, institutionId, 'view');
-    return EnrollmentResponseDto.from(
-      await this.getVisible(
-        this.dataSource.manager,
-        institutionId,
-        campusScope,
-        id,
-      ),
+    const [campusScope, editScope] = await Promise.all([
+      this.campusScope(user, institutionId, 'view'),
+      this.campusScope(user, institutionId, 'update'),
+    ]);
+    const row = await this.getVisible(
+      this.dataSource.manager,
+      institutionId,
+      campusScope,
+      id,
     );
+    const canEdit =
+      editScope === null || editScope.includes(row.course.campusId);
+    return EnrollmentResponseDto.from(row, canEdit);
   }
 
   async create(

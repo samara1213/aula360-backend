@@ -766,6 +766,21 @@ describe('Carga académica y matrículas (e2e)', () => {
       expect(other.body.data).toEqual([]);
     });
 
+    it('filtro por curso: exige el permiso de ver Cursos (B1 de la 3d-2)', async () => {
+      const role = await ctx.data.createInstitutionRole(institutionA.id, [
+        'people',
+        'people.students',
+      ]);
+      const user = await ctx.data.createUser();
+      await ctx.dataSource.query(
+        'INSERT INTO user_institution_roles (user_id, institution_id, role_id) VALUES ($1, $2, $3)',
+        [user.id, institutionA.id, role.id],
+      );
+      const agent = await loginAs(user.email);
+      await agent.get('/api/students').expect(200);
+      await agent.get(`/api/students?courseId=${courseA1}`).expect(403);
+    });
+
     it('/mine: sin el rol TEACHER vigente, lista vacía', async () => {
       const t = await teacherWithStudent(courseA1, campusA1.id);
       const before = await t.agent
@@ -880,6 +895,35 @@ describe('Carga académica y matrículas (e2e)', () => {
         ),
       );
       expect(replaces.map((r) => r.status).sort()).toEqual([201, 409]);
+    });
+
+    it('las observaciones solo las ve quien puede editar matrículas (M1 de la 3d-2)', async () => {
+      const s = await createStudent(institutionA.id, campusA1.id);
+      const e = await post(
+        adminA,
+        '/api/enrollments',
+        { studentId: s.id, courseId: courseA1, observations: 'Viene de Cali' },
+        201,
+      );
+      const role = await ctx.data.createInstitutionRole(
+        institutionA.id,
+        ['academic', 'academic.enrollments'],
+        { viewOnly: true },
+      );
+      const viewer = await ctx.data.createUser();
+      await ctx.dataSource.query(
+        'INSERT INTO user_institution_roles (user_id, institution_id, role_id) VALUES ($1, $2, $3)',
+        [viewer.id, institutionA.id, role.id],
+      );
+      const agent = await loginAs(viewer.email);
+      const seen = await agent.get(`/api/enrollments/${e.id}`).expect(200);
+      expect(seen.body.status).toBe('ENROLLED');
+      expect(seen.body).not.toHaveProperty('observations');
+      // Quien puede editar en la sede del curso, sí.
+      const full = await campusAdminA
+        .get(`/api/enrollments/${e.id}`)
+        .expect(200);
+      expect(full.body.observations).toBe('Viene de Cali');
     });
 
     it('las observaciones solo van en el detalle', async () => {
