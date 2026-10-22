@@ -416,4 +416,68 @@ describe('Instituciones y sedes (e2e)', () => {
         .expect(403);
     });
   });
+
+  describe('/api/institutions/:institutionId/campuses (SUPER_ADMIN)', () => {
+    const base = () => `/api/institutions/${institutionB.id}/campuses`;
+
+    it('lista, crea, edita, desactiva y reactiva sedes de cualquier institución', async () => {
+      const list = await superAdmin.get(base()).expect(200);
+      const ids = (list.body.data as { id: string }[]).map((c) => c.id);
+      expect(ids).toContain(campusB.id);
+      expect(ids).not.toContain(campusA1.id);
+
+      const created = await superAdmin
+        .post(base())
+        .send({ name: 'Sede B Norte', city: 'Tunja' })
+        .expect(201);
+      expect(created.body).toMatchObject({
+        institutionId: institutionB.id,
+        name: 'Sede B Norte',
+        city: 'Tunja',
+        isActive: true,
+      });
+      const id = created.body.id as string;
+
+      await superAdmin
+        .patch(`${base()}/${id}`)
+        .send({ address: 'Calle 1' })
+        .expect(200);
+      const off = await superAdmin
+        .patch(`${base()}/${id}/deactivate`)
+        .expect(200);
+      expect(off.body.isActive).toBe(false);
+      const inactive = await superAdmin
+        .get(`${base()}?isActive=false&search=Norte`)
+        .expect(200);
+      expect(inactive.body.data).toHaveLength(1);
+      const on = await superAdmin.patch(`${base()}/${id}/activate`).expect(200);
+      expect(on.body.isActive).toBe(true);
+
+      await superAdmin.post(base()).send({ name: 'Sede B Norte' }).expect(409);
+    });
+
+    it('institución inexistente: 404; sede de otra institución: 404', async () => {
+      const missing = '00000000-0000-4000-8000-000000000000';
+      await superAdmin.get(`/api/institutions/${missing}/campuses`).expect(404);
+      await superAdmin
+        .post(`/api/institutions/${missing}/campuses`)
+        .send({ name: 'Fantasma' })
+        .expect(404);
+      await superAdmin
+        .patch(`${base()}/${campusA1.id}`)
+        .send({ name: 'Robada' })
+        .expect(404);
+      await superAdmin.patch(`${base()}/${campusA1.id}/deactivate`).expect(404);
+    });
+
+    it('quien no es SUPER_ADMIN: 403, también sobre su propia institución', async () => {
+      for (const agent of [adminA, adminB, campusAdminA, teacherA]) {
+        await agent.get(base()).expect(403);
+        await agent
+          .get(`/api/institutions/${institutionA.id}/campuses`)
+          .expect(403);
+        await agent.post(base()).send({ name: 'Intrusa' }).expect(403);
+      }
+    });
+  });
 });

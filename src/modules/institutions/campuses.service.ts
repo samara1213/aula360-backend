@@ -1,6 +1,7 @@
 import {
   ConflictException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -20,6 +21,10 @@ import { CampusResponseDto } from './dto/campus-response.dto';
 import { CreateCampusDto } from './dto/create-campus.dto';
 import { UpdateCampusDto } from './dto/update-campus.dto';
 import { CampusEntity } from './entities/campus.entity';
+import { InstitutionEntity } from './entities/institution.entity';
+
+/** Quién actúa y desde dónde: la institución activa o el SUPER_ADMIN (system). */
+type Actor = { user: AuthUser; scope: 'institution' | 'system' };
 
 /** Slug de menú que controla las sedes (permiso de @RequirePermission). */
 export const CAMPUS_PERMISSION = 'institution.campuses';
@@ -30,12 +35,19 @@ export const CAMPUS_PERMISSION = 'institution.campuses';
  * El alcance por sede se calcula solo con las asignaciones cuyo rol otorga el
  * permiso pedido: si todas tienen campus_id, solo ve esas sedes y no puede
  * crear, editar ni activar/desactivar.
+ *
+ * Los métodos `...Of(institutionId)` son del SUPER_ADMIN (cualquier
+ * institución, sin alcance por sede): verifican que la institución exista.
  */
 @Injectable()
 export class CampusesService {
+  private readonly logger = new Logger(CampusesService.name);
+
   constructor(
     @InjectRepository(CampusEntity)
     private readonly campuses: Repository<CampusEntity>,
+    @InjectRepository(InstitutionEntity)
+    private readonly institutions: Repository<InstitutionEntity>,
     private readonly permissions: PermissionsReader,
   ) {}
 
@@ -50,7 +62,15 @@ export class CampusesService {
       CAMPUS_PERMISSION,
       'view',
     );
+    return this.list(institutionId, scope, query);
+  }
 
+  /** scope null = todas las sedes de la institución. */
+  private async list(
+    institutionId: string,
+    scope: string[] | null,
+    query: ListQueryDto,
+  ): Promise<Paginated<CampusResponseDto>> {
     const qb = this.campuses
       .createQueryBuilder('c')
       .where('c.institution_id = :institutionId', { institutionId })
@@ -97,13 +117,23 @@ export class CampusesService {
       user,
       'create',
     );
+    return this.createIn(institutionId, dto, { user, scope: 'institution' });
+  }
+
+  private async createIn(
+    institutionId: string,
+    dto: CreateCampusDto,
+    actor: Actor,
+  ): Promise<CampusResponseDto> {
     const entity = this.campuses.create({
       institutionId,
       name: dto.name,
       address: dto.address ?? null,
       city: dto.city ?? null,
     });
-    return CampusResponseDto.from(await this.save(entity));
+    const saved = await this.save(entity);
+    this.audit(actor, 'campus.created', institutionId, saved.id);
+    return CampusResponseDto.from(saved);
   }
 
   async update(
@@ -111,16 +141,30 @@ export class CampusesService {
     id: string,
     dto: UpdateCampusDto,
   ): Promise<CampusResponseDto> {
-    rejectNullFields(dto, ['name']);
     const institutionId = await this.requireInstitutionWideScope(
       user,
       'update',
     );
+    return this.updateIn(institutionId, id, dto, {
+      user,
+      scope: 'institution',
+    });
+  }
+
+  private async updateIn(
+    institutionId: string,
+    id: string,
+    dto: UpdateCampusDto,
+    actor: Actor,
+  ): Promise<CampusResponseDto> {
+    rejectNullFields(dto, ['name']);
     const entity = await this.getOrFail(institutionId, id);
     if (dto.name !== undefined) entity.name = dto.name;
     if (dto.address !== undefined) entity.address = dto.address;
     if (dto.city !== undefined) entity.city = dto.city;
-    return CampusResponseDto.from(await this.save(entity));
+    const saved = await this.save(entity);
+    this.audit(actor, 'campus.updated', institutionId, id);
+    return CampusResponseDto.from(saved);
   }
 
   /** Activa o desactiva (lógico, permiso 'delete' en ambos sentidos): nunca se borra. */
@@ -133,10 +177,73 @@ export class CampusesService {
       user,
       'delete',
     );
+    return this.setActiveIn(institutionId, id, isActive, {
+      user,
+      scope: 'institution',
+    });
+  }
+
+  // ---------------------------------------------- SUPER_ADMIN (cualquiera)
+
+  async findAllOf(
+    institutionId: string,
+    query: ListQueryDto,
+  ): Promise<Paginated<CampusResponseDto>> {
+    await this.assertInstitutionExists(institutionId);
+    return this.list(institutionId, null, query);
+  }
+
+  async createOf(
+    user: AuthUser,
+    institutionId: string,
+    dto: CreateCampusDto,
+  ): Promise<CampusResponseDto> {
+    await this.assertInstitutionExists(institutionId);
+    return this.createIn(institutionId, dto, { user, scope: 'system' });
+  }
+
+  async updateOf(
+    user: AuthUser,
+    institutionId: string,
+    id: string,
+    dto: UpdateCampusDto,
+  ): Promise<CampusResponseDto> {
+    await this.assertInstitutionExists(institutionId);
+    return this.updateIn(institutionId, id, dto, { user, scope: 'system' });
+  }
+
+  async setActiveOf(
+    user: AuthUser,
+    institutionId: string,
+    id: string,
+    isActive: boolean,
+  ): Promise<CampusResponseDto> {
+    await this.assertInstitutionExists(institutionId);
+    return this.setActiveIn(institutionId, id, isActive, {
+      user,
+      scope: 'system',
+    });
+  }
+
+  // ------------------------------------------------------------ comunes
+
+  private async setActiveIn(
+    institutionId: string,
+    id: string,
+    isActive: boolean,
+    actor: Actor,
+  ): Promise<CampusResponseDto> {
     const entity = await this.getOrFail(institutionId, id);
     if (entity.isActive !== isActive) {
       entity.isActive = isActive;
       await this.campuses.save(entity);
+      // Desactivar corta el acceso de quienes solo tienen roles en esta sede.
+      this.audit(
+        actor,
+        isActive ? 'campus.activated' : 'campus.deactivated',
+        institutionId,
+        id,
+      );
     }
     return CampusResponseDto.from(entity);
   }
@@ -166,6 +273,31 @@ export class CampusesService {
       'Su acceso está limitado a una sede: no puede gestionar sedes',
     );
     return institutionId;
+  }
+
+  /** Auditoría en el log JSON de la aplicación (como la de usuarios). */
+  private audit(
+    actor: Actor,
+    action: string,
+    institutionId: string,
+    campusId: string,
+  ): void {
+    this.logger.log(
+      JSON.stringify({
+        audit: action,
+        actorId: actor.user.userId,
+        actorType: actor.user.userType,
+        scope: actor.scope,
+        institutionId,
+        campusId,
+      }),
+    );
+  }
+
+  private async assertInstitutionExists(institutionId: string): Promise<void> {
+    if (!(await this.institutions.existsBy({ id: institutionId }))) {
+      throw new NotFoundException('Institución no encontrada');
+    }
   }
 
   private notFound(): NotFoundException {

@@ -176,9 +176,10 @@ export class InstitutionsController {
   @ApiOkResponse({ type: InstitutionResponseDto })
   @ApiNotFoundResponse({ description: 'Institución no encontrada' })
   deactivate(
+    @CurrentUser() user: AuthUser,
     @Param('id', ParseUUIDPipe) id: string,
   ): Promise<InstitutionResponseDto> {
-    return this.institutions.setActive(id, false);
+    return this.institutions.setActive(user, id, false);
   }
 
   @Patch(':id/activate')
@@ -187,8 +188,9 @@ export class InstitutionsController {
   @ApiOkResponse({ type: InstitutionResponseDto })
   @ApiNotFoundResponse({ description: 'Institución no encontrada' })
   activate(
+    @CurrentUser() user: AuthUser,
     @Param('id', ParseUUIDPipe) id: string,
   ): Promise<InstitutionResponseDto> {
-    return this.institutions.setActive(id, true);
+    return this.institutions.setActive(user, id, true);
   }
 }

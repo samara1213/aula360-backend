@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
@@ -11,6 +12,7 @@ import { AuthUser } from '../../common/interfaces/auth-user.interface';
 import { PermissionsReader } from '../security/permissions-reader.service';
 import { CAMPUS_PERMISSION, CampusesService } from './campuses.service';
 import { CampusEntity } from './entities/campus.entity';
+import { InstitutionEntity } from './entities/institution.entity';
 
 const user: AuthUser = {
   userId: 'user-1',
@@ -18,6 +20,14 @@ const user: AuthUser = {
   userType: 'INSTITUTION_ADMIN',
   mustChangePassword: false,
   sessionId: 'sid',
+};
+
+const superUser: AuthUser = {
+  userId: 'super-1',
+  institutionId: null,
+  userType: 'SUPER_ADMIN',
+  mustChangePassword: false,
+  sessionId: 'sid-2',
 };
 
 function campus(overrides: Partial<CampusEntity> = {}): CampusEntity {
@@ -51,6 +61,7 @@ describe('CampusesService', () => {
     create: jest.fn((v: Partial<CampusEntity>) => v),
     save: jest.fn((v: CampusEntity) => Promise.resolve(v)),
   };
+  const institutions = { existsBy: jest.fn() };
   const permissions = {
     campusScope: jest.fn(),
     // Misma regla que el real: con alcance por sede responde 403.
@@ -84,6 +95,10 @@ describe('CampusesService', () => {
         CampusesService,
         { provide: getRepositoryToken(CampusEntity), useValue: campuses },
         { provide: PermissionsReader, useValue: permissions },
+        {
+          provide: getRepositoryToken(InstitutionEntity),
+          useValue: institutions,
+        },
       ],
     }).compile();
     service = moduleRef.get(CampusesService);
@@ -232,6 +247,61 @@ describe('CampusesService', () => {
         CAMPUS_PERMISSION,
         'delete',
       );
+    });
+  });
+
+  describe('SUPER_ADMIN: sedes de cualquier institución', () => {
+    it('lista sin alcance por sede y filtra por la institución indicada', async () => {
+      institutions.existsBy.mockResolvedValue(true);
+      qb.getManyAndCount.mockResolvedValue([
+        [campus({ institutionId: 'inst-B' })],
+        1,
+      ]);
+      const result = await service.findAllOf('inst-B', { page: 1, limit: 20 });
+      expect(result.data).toHaveLength(1);
+      expect(qb.where).toHaveBeenCalledWith(
+        'c.institution_id = :institutionId',
+        {
+          institutionId: 'inst-B',
+        },
+      );
+      expect(permissions.campusScope).not.toHaveBeenCalled();
+    });
+
+    it('institución inexistente: 404 sin escribir', async () => {
+      institutions.existsBy.mockResolvedValue(false);
+      await expect(
+        service.createOf(superUser, 'inst-X', { name: 'Norte' }),
+      ).rejects.toBeInstanceOf(NotFoundException);
+      expect(campuses.save).not.toHaveBeenCalled();
+    });
+
+    it('desactivar una sede de otra institución queda en la auditoría', async () => {
+      const log = jest.spyOn(Logger.prototype, 'log').mockImplementation();
+      institutions.existsBy.mockResolvedValue(true);
+      campuses.findOne.mockResolvedValue(campus({ institutionId: 'inst-B' }));
+      await service.setActiveOf(superUser, 'inst-B', 'campus-1', false);
+      const entry = JSON.parse(String(log.mock.calls[0]?.[0])) as unknown;
+      expect(entry).toEqual({
+        audit: 'campus.deactivated',
+        actorId: 'super-1',
+        actorType: 'SUPER_ADMIN',
+        scope: 'system',
+        institutionId: 'inst-B',
+        campusId: 'campus-1',
+      });
+      log.mockRestore();
+    });
+
+    it('una sede de otra institución: 404', async () => {
+      institutions.existsBy.mockResolvedValue(true);
+      campuses.findOne.mockResolvedValue(null);
+      await expect(
+        service.setActiveOf(superUser, 'inst-B', 'campus-1', false),
+      ).rejects.toBeInstanceOf(NotFoundException);
+      expect(campuses.findOne).toHaveBeenCalledWith({
+        where: { id: 'campus-1', institutionId: 'inst-B' },
+      });
     });
   });
 });

@@ -766,8 +766,28 @@ describe('Aislamiento entre instituciones (e2e)', () => {
     const users = `/institutions/${inst}/users`;
     const assignments = `/institutions/${inst}/role-assignments`;
     const templates = `/institutions/${inst}/report-card-templates`;
+    const campuses = `/institutions/${inst}/campuses`;
     return [
       { route: 'GET /institutions', path: '/institutions' },
+      { route: 'GET /institutions/:institutionId/campuses', path: campuses },
+      {
+        route: 'POST /institutions/:institutionId/campuses',
+        path: campuses,
+        body: { name: `Intrusa ${suffix()}` },
+      },
+      {
+        route: 'PATCH /institutions/:institutionId/campuses/:id',
+        path: `${campuses}/${b.campus1}`,
+        body: { name: 'Cambiada' },
+      },
+      {
+        route: 'PATCH /institutions/:institutionId/campuses/:id/deactivate',
+        path: `${campuses}/${b.campus1}/deactivate`,
+      },
+      {
+        route: 'PATCH /institutions/:institutionId/campuses/:id/activate',
+        path: `${campuses}/${b.campus1}/activate`,
+      },
       {
         route: 'GET /users/lookup',
         path: '/users/lookup?email=nadie%40aula360.test',
@@ -804,7 +824,7 @@ describe('Aislamiento entre instituciones (e2e)', () => {
         route: 'POST /institutions/:institutionId/users',
         path: users,
         body: {
-          userType: 'TEACHER',
+          userType: 'INSTITUTION_ADMIN',
           documentType: 'CC',
           documentNumber: `E2E${suffix()}`,
           firstName: 'Intruso',
@@ -1005,7 +1025,25 @@ describe('Aislamiento entre instituciones (e2e)', () => {
       const templates = `/institutions/${inst}/report-card-templates/${bTemplate}`;
       const user: [number, string] = [404, 'Usuario no encontrado'];
       const template: [number, string] = [404, 'Plantilla no encontrada'];
+      const campus: [number, string] = [404, 'Sede no encontrada'];
+      const campuses = `/institutions/${inst}/campuses/${b.campus1}`;
       const entries: Call[] = [
+        {
+          route: 'PATCH /institutions/:institutionId/campuses/:id',
+          path: campuses,
+          body: { name: 'Cambiada' },
+          expected: campus,
+        },
+        {
+          route: 'PATCH /institutions/:institutionId/campuses/:id/deactivate',
+          path: `${campuses}/deactivate`,
+          expected: campus,
+        },
+        {
+          route: 'PATCH /institutions/:institutionId/campuses/:id/activate',
+          path: `${campuses}/activate`,
+          expected: campus,
+        },
         {
           route: 'GET /institutions/:institutionId/users/:id',
           path: users,
@@ -1277,7 +1315,7 @@ describe('Aislamiento entre instituciones (e2e)', () => {
         {
           route: 'POST /users',
           path: '/users',
-          body: { ...person(), userType: 'TEACHER', roleId: b.role },
+          body: { ...person(), userType: 'INSTITUTION_ADMIN', roleId: b.role },
           expected: nf('Rol no encontrado'),
         },
         {
@@ -1285,8 +1323,8 @@ describe('Aislamiento entre instituciones (e2e)', () => {
           path: '/users',
           body: {
             ...person(),
-            userType: 'TEACHER',
-            roleId: globalTeacherRole,
+            userType: 'INSTITUTION_ADMIN',
+            roleId: a.role,
             campusId: b.campus1,
           },
           expected: nf('Sede no encontrada'),
@@ -1397,7 +1435,7 @@ describe('Aislamiento entre instituciones (e2e)', () => {
           route: 'POST /institutions/:institutionId/users',
           path: `/institutions/${inst}/users`,
           body: {
-            userType: 'TEACHER',
+            userType: 'INSTITUTION_ADMIN',
             documentType: 'CC',
             documentNumber: `E2E${suffix()}`,
             firstName: 'Intruso',

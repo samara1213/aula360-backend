@@ -185,6 +185,7 @@ export class InstitutionsService {
 
   /** Activa o desactiva (lógico). Al desactivar, sus usuarios pierden el acceso a ella. */
   async setActive(
+    actor: AuthUser,
     id: string,
     isActive: boolean,
   ): Promise<InstitutionResponseDto> {
@@ -192,6 +193,14 @@ export class InstitutionsService {
     if (entity.isActive !== isActive) {
       entity.isActive = isActive;
       await this.institutions.save(entity);
+      this.logger.log(
+        JSON.stringify({
+          audit: isActive ? 'institution.activated' : 'institution.deactivated',
+          actorId: actor.userId,
+          actorType: actor.userType,
+          institutionId: id,
+        }),
+      );
     }
     return this.toDto(entity);
   }

@@ -88,12 +88,24 @@ export class UserPersonalDataDto {
   phone?: string | null;
 }
 
+/** Lo único que se crea por POST /users (B3 de la 3c). */
+export const USERS_ENDPOINT_TYPES = ['INSTITUTION_ADMIN'] as const;
+
+/**
+ * POST /users solo crea personal administrativo: los docentes y estudiantes
+ * se crean con su perfil (POST /teachers y POST /students), que reutilizan
+ * este DTO internamente con su propio userType.
+ */
 export class CreateUserDto extends UserPersonalDataDto {
   @ApiProperty({
-    description: 'Tipo de usuario a crear',
-    enum: CREATABLE_USER_TYPES,
+    description:
+      'Tipo de usuario a crear. Docentes y estudiantes: POST /teachers y POST /students',
+    enum: USERS_ENDPOINT_TYPES,
   })
-  @IsIn(CREATABLE_USER_TYPES)
+  @IsIn(USERS_ENDPOINT_TYPES, {
+    message:
+      'Por aquí solo se crea personal administrativo: los docentes y estudiantes se crean desde Personas',
+  })
   userType: (typeof CREATABLE_USER_TYPES)[number];
 
   @ApiProperty({

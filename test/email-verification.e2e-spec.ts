@@ -20,7 +20,7 @@ describe('Verificación del email (e2e, tarea 2.11.6)', () => {
   let institutionB: InstitutionEntity;
   let adminA: Agent;
   let adminB: Agent;
-  let teacherRoleId: string;
+  let staffRoleId: string;
 
   const server = () => ctx.app.getHttpServer();
 
@@ -83,10 +83,10 @@ describe('Verificación del email (e2e, tarea 2.11.6)', () => {
     await data.assignGlobalRole(adminBUser.id, institutionB.id);
     adminA = await loginAs(adminAUser.email!);
     adminB = await loginAs(adminBUser.email!);
-    teacherRoleId = (
+    staffRoleId = (
       await ctx.dataSource
         .getRepository(RoleEntity)
-        .findOneByOrFail({ name: 'TEACHER', institutionId: IsNull() })
+        .findOneByOrFail({ name: 'INSTITUTION_ADMIN', institutionId: IsNull() })
     ).id;
   });
 
@@ -101,13 +101,13 @@ describe('Verificación del email (e2e, tarea 2.11.6)', () => {
     const res = await adminA
       .post('/api/users')
       .send({
-        userType: 'TEACHER',
+        userType: 'INSTITUTION_ADMIN',
         documentType: 'CC',
         documentNumber: `E2E${s}`,
         firstName: 'Nuevo',
         lastName: `E2E ${s}`,
         email,
-        roleId: teacherRoleId,
+        roleId: staffRoleId,
       })
       .expect(201);
     ctx.data.trackUser(res.body.id as string);

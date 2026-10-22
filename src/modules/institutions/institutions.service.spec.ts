@@ -3,6 +3,7 @@ import {
   ConflictException,
   ForbiddenException,
   NotFoundException,
+  Logger,
 } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
@@ -275,18 +276,23 @@ describe('InstitutionsService', () => {
   });
 
   describe('setActive', () => {
-    it('desactiva sin borrar', async () => {
+    it('desactiva sin borrar y lo deja en la auditoría', async () => {
+      const log = jest.spyOn(Logger.prototype, 'log').mockImplementation();
       repo.findOne.mockResolvedValue(institution());
-      const result = await service.setActive('inst-1', false);
+      const result = await service.setActive(admin, 'inst-1', false);
       expect(result.isActive).toBe(false);
       expect(repo.save).toHaveBeenCalledWith(
         expect.objectContaining({ isActive: false }),
       );
+      expect(log).toHaveBeenCalledWith(
+        expect.stringContaining('"audit":"institution.deactivated"'),
+      );
+      log.mockRestore();
     });
 
     it('no guarda si ya está en ese estado', async () => {
       repo.findOne.mockResolvedValue(institution());
-      await service.setActive('inst-1', true);
+      await service.setActive(admin, 'inst-1', true);
       expect(repo.save).not.toHaveBeenCalled();
     });
   });

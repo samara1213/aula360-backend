@@ -15,7 +15,7 @@ const suffix = () => randomBytes(4).toString('hex');
 function newUserBody(extra: Record<string, unknown> = {}) {
   const s = suffix();
   return {
-    userType: 'TEACHER',
+    userType: 'INSTITUTION_ADMIN',
     documentType: 'cc',
     documentNumber: `E2E${s}`,
     firstName: 'Nuevo',
@@ -50,6 +50,8 @@ describe('Usuarios (e2e)', () => {
 
   let globalRoles: Record<string, string>;
   let roleB: RoleEntity;
+  /** Rol propio de A para personal administrativo (secretaría). */
+  let staffRoleA: RoleEntity;
 
   const server = () => ctx.app.getHttpServer();
 
@@ -90,6 +92,10 @@ describe('Usuarios (e2e)', () => {
       .getMany();
     globalRoles = Object.fromEntries(roles.map((r) => [r.name, r.id]));
     roleB = await data.createInstitutionRole(institutionB.id, ['people']);
+    staffRoleA = await data.createInstitutionRole(institutionA.id, [
+      'people',
+      'people.students',
+    ]);
 
     superUser = await data.createUser({ userType: 'SUPER_ADMIN' });
     adminAUser = await data.createUser();
@@ -167,21 +173,18 @@ describe('Usuarios (e2e)', () => {
   describe('POST /users', () => {
     it('crea el usuario con contraseña temporal (una sola vez) y debe cambiarla al entrar', async () => {
       const body = newUserBody({ campusId: campusA1.id });
-      const res = await createVia(adminA, {
-        ...body,
-        roleId: globalRoles.TEACHER,
-      });
+      const res = await createVia(adminA, { ...body, roleId: staffRoleA.id });
       expect(res.status).toBe(201);
       expect(res.headers['cache-control']).toBe('no-store');
       expect(res.body).toMatchObject({
         documentType: 'CC',
         documentNumber: body.documentNumber,
-        userType: 'TEACHER',
+        userType: 'INSTITUTION_ADMIN',
         mustChangePassword: true,
         isActive: true,
         assignments: [
           {
-            role: { id: globalRoles.TEACHER, name: 'TEACHER' },
+            role: { id: staffRoleA.id },
             campus: { id: campusA1.id },
           },
         ],
@@ -204,12 +207,37 @@ describe('Usuarios (e2e)', () => {
       expect(detail.body).not.toHaveProperty('temporaryPassword');
     });
 
+    it('docentes y estudiantes no se crean por aquí: 400 y no queda el usuario', async () => {
+      // Ni con su tipo de usuario...
+      for (const userType of ['TEACHER', 'STUDENT']) {
+        const res = await createVia(
+          adminA,
+          newUserBody({ userType, roleId: staffRoleA.id }),
+        );
+        expect(res.status).toBe(400);
+        expect(JSON.stringify(res.body)).toContain('se crean desde Personas');
+      }
+      // ...ni como administrativo con el rol global de docente o estudiante.
+      for (const role of ['TEACHER', 'STUDENT']) {
+        const body = newUserBody({ roleId: globalRoles[role] });
+        const res = await createVia(adminA, body);
+        expect(res.status).toBe(400);
+        expect(res.body.message).toBe(
+          'Los roles de docente y estudiante se asignan al crearlos desde Personas',
+        );
+        const exists = await ctx.dataSource
+          .getRepository(UserEntity)
+          .existsBy({ documentNumber: body.documentNumber });
+        expect(exists).toBe(false);
+      }
+    });
+
     it('documento o email repetido: 409 genérico', async () => {
       const dupDocument = await createVia(
         adminA,
         newUserBody({
           documentNumber: teacherA1User.documentNumber,
-          roleId: globalRoles.TEACHER,
+          roleId: staffRoleA.id,
         }),
       );
       expect(dupDocument.status).toBe(409);
@@ -217,7 +245,7 @@ describe('Usuarios (e2e)', () => {
         adminA,
         newUserBody({
           email: teacherA1User.email!.toUpperCase(),
-          roleId: globalRoles.TEACHER,
+          roleId: staffRoleA.id,
         }),
       );
       expect(dupEmail.status).toBe(409);
@@ -227,7 +255,7 @@ describe('Usuarios (e2e)', () => {
     it('sin permiso (docente): 403', async () => {
       const res = await createVia(
         teacherA1,
-        newUserBody({ roleId: globalRoles.TEACHER }),
+        newUserBody({ roleId: staffRoleA.id }),
       );
       expect(res.status).toBe(403);
     });
@@ -235,12 +263,12 @@ describe('Usuarios (e2e)', () => {
     it('no se puede crear un SUPER_ADMIN ni enviar campos extra: 400', async () => {
       const superType = await createVia(
         adminA,
-        newUserBody({ userType: 'SUPER_ADMIN', roleId: globalRoles.TEACHER }),
+        newUserBody({ userType: 'SUPER_ADMIN', roleId: staffRoleA.id }),
       );
       expect(superType.status).toBe(400);
       const extra = await createVia(
         adminA,
-        newUserBody({ roleId: globalRoles.TEACHER, isActive: false }),
+        newUserBody({ roleId: staffRoleA.id, isActive: false }),
       );
       expect(extra.status).toBe(400);
     });
@@ -260,34 +288,22 @@ describe('Usuarios (e2e)', () => {
       expect(exists).toBe(false);
     });
 
-    it('administrador de sede: solo en su sede', async () => {
+    it('administrador de sede: no crea personal administrativo (403), ni fuera de su sede (404)', async () => {
       const noCampus = await createVia(
         campusAdminA,
-        newUserBody({ roleId: globalRoles.TEACHER }),
+        newUserBody({ roleId: staffRoleA.id }),
       );
       expect(noCampus.status).toBe(403);
       const otherCampus = await createVia(
         campusAdminA,
-        newUserBody({ roleId: globalRoles.TEACHER, campusId: campusA2.id }),
+        newUserBody({ roleId: staffRoleA.id, campusId: campusA2.id }),
       );
       expect(otherCampus.status).toBe(404);
       const ownCampus = await createVia(
         campusAdminA,
-        newUserBody({ roleId: globalRoles.TEACHER, campusId: campusA1.id }),
+        newUserBody({ roleId: staffRoleA.id, campusId: campusA1.id }),
       );
-      expect(ownCampus.status).toBe(201);
-    });
-
-    it('administrador de sede no puede crear INSTITUTION_ADMIN: 403', async () => {
-      const res = await createVia(
-        campusAdminA,
-        newUserBody({
-          userType: 'INSTITUTION_ADMIN',
-          roleId: globalRoles.TEACHER,
-          campusId: campusA1.id,
-        }),
-      );
-      expect(res.status).toBe(403);
+      expect(ownCampus.status).toBe(403);
     });
 
     it('sin oráculo: rol inexistente con documento repetido da 404, no 409', async () => {
@@ -305,7 +321,7 @@ describe('Usuarios (e2e)', () => {
       const res = await adminA
         .post('/api/users')
         .set('Origin', 'https://evil.example')
-        .send(newUserBody({ roleId: globalRoles.TEACHER }));
+        .send(newUserBody({ roleId: staffRoleA.id }));
       expect(res.status).toBe(403);
     });
   });
@@ -777,7 +793,7 @@ describe('Usuarios (e2e)', () => {
     it('un administrador de institución no puede usarlo: 403', async () => {
       const res = await createVia(
         adminA,
-        newUserBody({ roleId: globalRoles.TEACHER }),
+        newUserBody({ roleId: globalRoles.INSTITUTION_ADMIN }),
         `/api/institutions/${institutionB.id}/users`,
       );
       expect(res.status).toBe(403);
@@ -789,7 +805,7 @@ describe('Usuarios (e2e)', () => {
         .expect(404);
       const res = await createVia(
         superAdmin,
-        newUserBody({ roleId: globalRoles.TEACHER }),
+        newUserBody({ roleId: globalRoles.INSTITUTION_ADMIN }),
         `/api/institutions/${randomUUID()}/users`,
       );
       expect(res.status).toBe(404);

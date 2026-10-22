@@ -68,6 +68,9 @@ import { UsersService } from './users.service';
 /** Slug de menú que controla la gestión de usuarios (el mismo de las asignaciones). */
 export const USERS_PERMISSION = ASSIGNMENT_PERMISSION;
 
+/** Roles globales que solo se dan junto con su perfil (POST /teachers y /students). */
+const PROFILE_ROLES = ['TEACHER', 'STUDENT'];
+
 /**
  * institution: la institución activa del token, con las reglas del administrador.
  * system: el SUPER_ADMIN sobre cualquier institución (p. ej. su primer administrador).
@@ -201,9 +204,10 @@ export class ManagedUsersService implements OnModuleInit {
     dto: CreateUserDto,
   ): Promise<CreatedUserResponseDto> {
     const { password, hash } = await this.newTemporaryPassword();
-    const userId = await this.dataSource.transaction((manager) =>
-      this.insertUserWithAssignment(manager, scope, dto, hash),
-    );
+    const userId = await this.dataSource.transaction(async (manager) => {
+      await this.rejectProfileRole(manager, dto.roleId);
+      return this.insertUserWithAssignment(manager, scope, dto, hash);
+    });
     const user = await this.afterCreate(scope, userId, password, {
       roleId: dto.roleId,
       campusId: dto.campusId ?? null,
@@ -215,6 +219,25 @@ export class ManagedUsersService implements OnModuleInit {
       user,
     );
     return { ...response, temporaryPassword: password };
+  }
+
+  /**
+   * Los roles globales TEACHER y STUDENT van con su perfil (docente o
+   * estudiante): una cuenta creada aquí con ellos quedaría sin ficha, y la
+   * ficha ya no se podría crear después (documento repetido). B3 de la 3c.
+   */
+  private async rejectProfileRole(
+    manager: EntityManager,
+    roleId: string,
+  ): Promise<void> {
+    const profileRole = await manager.getRepository(RoleEntity).exists({
+      where: { id: roleId, institutionId: IsNull(), name: In(PROFILE_ROLES) },
+    });
+    if (profileRole) {
+      throw new BadRequestException(
+        'Los roles de docente y estudiante se asignan al crearlos desde Personas',
+      );
+    }
   }
 
   /** Contraseña temporal y su hash (bcrypt va fuera de la transacción). */

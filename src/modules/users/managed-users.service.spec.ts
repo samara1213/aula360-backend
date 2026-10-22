@@ -104,7 +104,7 @@ describe('ManagedUsersService', () => {
     createQueryBuilder: jest.fn(() => profileQb),
     existsBy: jest.fn(),
   };
-  const roleRepo = { find: jest.fn() };
+  const roleRepo = { find: jest.fn(), exists: jest.fn() };
   const repos = new Map<unknown, unknown>([
     [UserEntity, userRepo],
     [UserInstitutionRoleEntity, assignmentRepo],
@@ -163,6 +163,7 @@ describe('ManagedUsersService', () => {
       { roleId: 'role-1', campusId: null },
     ]);
     institutionRepo.existsBy.mockResolvedValue(true);
+    roleRepo.exists.mockResolvedValue(false);
     userRepo.insert.mockResolvedValue({ identifiers: [{ id: 'user-1' }] });
     userRepo.findOneByOrFail.mockResolvedValue(target());
     assignments.validateAssignment.mockResolvedValue({
@@ -194,6 +195,21 @@ describe('ManagedUsersService', () => {
   });
 
   describe('create', () => {
+    it('con un rol global de docente o estudiante: 400 sin insertar (se crean desde Personas)', async () => {
+      roleRepo.exists.mockResolvedValue(true);
+      await expect(
+        service.create(institution, {
+          userType: 'INSTITUTION_ADMIN',
+          documentType: 'CC',
+          documentNumber: '123',
+          firstName: 'Ana',
+          lastName: 'Gil',
+          roleId: 'role-teacher',
+        }),
+      ).rejects.toThrow(BadRequestException);
+      expect(userRepo.insert).not.toHaveBeenCalled();
+    });
+
     const dto = {
       userType: 'TEACHER' as const,
       documentType: 'CC',
