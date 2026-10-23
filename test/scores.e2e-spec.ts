@@ -799,6 +799,40 @@ describe('Notas y cuadro de notas (e2e)', () => {
         .expect(404);
     });
 
+    it('a quien no es el estudiante, un año sin matrícula da el mismo 404 que no poder verlo', async () => {
+      const otherYear = (
+        await post(adminA, '/api/academic-years', { year: futureYear + 2 }, 201)
+      ).id;
+      // teacher1 ve a s1 (le dicta en 601), pero s1 no tiene matrícula en otherYear.
+      const noEnrollment = await teacher1
+        .get(`/api/gradebook/students/${s1}?academicYearId=${otherYear}`)
+        .expect(404);
+      // teacher1 no tiene relación con s3.
+      const noAccess = await teacher1
+        .get(`/api/gradebook/students/${s3}?academicYearId=${otherYear}`)
+        .expect(404);
+      expect((noEnrollment.body as { message: string }).message).toBe(
+        'Estudiante no encontrado',
+      );
+      expect((noEnrollment.body as { message: string }).message).toBe(
+        (noAccess.body as { message: string }).message,
+      );
+      // El propio estudiante sí recibe el motivo.
+      const own = await student1
+        .get(`/api/gradebook/mine?academicYearId=${otherYear}`)
+        .expect(404);
+      expect((own.body as { message: string }).message).toMatch(/matrícula/);
+    });
+
+    it('el estudiante no ve el cuadro de su propio curso ni las notas de otro (404)', async () => {
+      await student1
+        .get(`/api/gradebook/courses/${courseA1}?periodId=${currentPeriod}`)
+        .expect(404);
+      await student1
+        .get(`/api/gradebook/students/${s2}?periodId=${currentPeriod}`)
+        .expect(404);
+    });
+
     it('/gradebook/mine: el estudiante ve todas sus materias del año activo', async () => {
       const res = await student1.get('/api/gradebook/mine').expect(200);
       const body = res.body as StudentGradebook & {

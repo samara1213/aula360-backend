@@ -82,7 +82,7 @@ export class GradebookController {
   @ApiBadRequestResponse({ description: 'periodId y academicYearId a la vez' })
   @ApiNotFoundResponse({
     description:
-      'Estudiante, periodo o año no encontrado, o sin matrícula en él',
+      'Periodo o año no encontrado; el estudiante no existe, no lo puede ver o no tiene matrícula en ese año (el mismo 404, sin distinguir)',
   })
   student(
     @CurrentUser() user: AuthUser,

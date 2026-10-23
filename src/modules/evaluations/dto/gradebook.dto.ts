@@ -1,5 +1,9 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsOptional, IsUUID } from 'class-validator';
+import {
+  ENROLLMENT_STATUSES,
+  type EnrollmentStatus,
+} from '../../enrollments/entities/enrollment.entity';
 import { EvaluationCourseDto, EvaluationPeriodDto } from './evaluation.dto';
 import { GradingScaleDto } from './score.dto';
 
@@ -93,8 +97,8 @@ export class CourseGradebookRowDto {
   @ApiProperty({ type: GradebookStudentDto })
   student: GradebookStudentDto;
 
-  @ApiProperty({ example: 'ENROLLED' })
-  enrollmentStatus: string;
+  @ApiProperty({ enum: ENROLLMENT_STATUSES, example: 'ENROLLED' })
+  enrollmentStatus: EnrollmentStatus;
 
   @ApiProperty({ type: [CourseSubjectGradeDto] })
   subjects: CourseSubjectGradeDto[];
@@ -201,8 +205,8 @@ export class StudentGradebookDto {
   @ApiProperty({ type: GradebookStudentDto })
   student: GradebookStudentDto;
 
-  @ApiProperty({ example: 'ENROLLED' })
-  enrollmentStatus: string;
+  @ApiProperty({ enum: ENROLLMENT_STATUSES, example: 'ENROLLED' })
+  enrollmentStatus: EnrollmentStatus;
 
   @ApiProperty({ type: EvaluationCourseDto })
   course: EvaluationCourseDto;

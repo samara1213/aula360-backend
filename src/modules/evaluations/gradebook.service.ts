@@ -79,6 +79,8 @@ const periodDto = (p: PeriodEntity) => ({
  *   curso ve todas las materias; el docente, solo las de su carga activa
  *   (reemplazado, consulta sus notas en /evaluations/:id/scores).
  */
+const NOT_FOUND = 'Estudiante no encontrado';
+
 @Injectable()
 export class GradebookService {
   constructor(
@@ -171,7 +173,7 @@ export class GradebookService {
       relations: { user: true },
     });
     if (!student || !(await this.canSeeStudent(manager, actor, student))) {
-      throw new NotFoundException('Estudiante no encontrado');
+      throw new NotFoundException(NOT_FOUND);
     }
     return this.studentGradebook(manager, actor, student, query, false);
   }
@@ -229,7 +231,9 @@ export class GradebookService {
         throw new NotFoundException(
           query.academicYearId
             ? 'Año lectivo no encontrado'
-            : 'Sin matrícula en un año lectivo activo',
+            : own
+              ? 'Sin matrícula en un año lectivo activo'
+              : NOT_FOUND,
         );
       }
       periods = await manager.getRepository(PeriodEntity).find({
@@ -242,10 +246,10 @@ export class GradebookService {
       relations: { course: true },
     });
     if (!enrollment) {
+      // A otro (docente o administrador), el mismo 404 que si no pudiera
+      // verlo: no revela en qué años estuvo matriculado (B1 de la 3e-2).
       throw new NotFoundException(
-        own
-          ? 'Sin matrícula en ese año lectivo'
-          : 'El estudiante no tiene matrícula en ese año lectivo',
+        own ? 'Sin matrícula en ese año lectivo' : NOT_FOUND,
       );
     }
     const course = enrollment.course;
@@ -257,7 +261,7 @@ export class GradebookService {
       !subjects.length &&
       !this.access.isAdminOf(actor, course.campusId)
     ) {
-      throw new NotFoundException('Estudiante no encontrado');
+      throw new NotFoundException(NOT_FOUND);
     }
     const institution = await this.institution(manager, institutionId);
     const periodIds = periods.map((p) => p.id);
