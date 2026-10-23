@@ -8,9 +8,13 @@ import {
 import { DataSource, EntityManager, In } from 'typeorm';
 import { AuthUser } from '../../common/interfaces/auth-user.interface';
 import { schoolToday } from '../../common/utils/school-date';
+import { AcademicYearEntity } from '../academic/entities/academic-year.entity';
 import { PeriodEntity } from '../academic/entities/period.entity';
 import { TeacherSubjectCourseEntity } from '../academic/entities/teacher-subject-course.entity';
-import { EnrollmentEntity } from '../enrollments/entities/enrollment.entity';
+import {
+  EnrollmentEntity,
+  type EnrollmentStatus,
+} from '../enrollments/entities/enrollment.entity';
 import { InstitutionEntity } from '../institutions/entities/institution.entity';
 import {
   lockReportCards,
@@ -89,17 +93,44 @@ export class ScoresService {
     user: AuthUser,
     evaluationId: string,
   ): Promise<EvaluationScoresDto> {
-    const actor = await this.access.resolve(user, SCORES_PERMISSION, 'view');
+    // Quien ve y quien podría escribir (para avisar antes de editar).
+    const [actor, editor] = await Promise.all([
+      this.access.resolve(user, SCORES_PERMISSION, 'view'),
+      this.access.resolve(user, SCORES_PERMISSION, 'update'),
+    ]);
     const manager = this.dataSource.manager;
     const evaluation = await this.evaluations.getVisible(
       manager,
       actor,
       evaluationId,
     );
-    const institution = await manager
-      .getRepository(InstitutionEntity)
-      .findOneByOrFail({ id: actor.institutionId });
-    return this.toDto(manager, institution, evaluation);
+    const tsc = evaluation.teacherSubjectCourse;
+    const [institution, year] = await Promise.all([
+      manager
+        .getRepository(InstitutionEntity)
+        .findOneByOrFail({ id: actor.institutionId }),
+      manager
+        .getRepository(AcademicYearEntity)
+        .findOneByOrFail({ id: tsc.course.academicYearId }),
+    ]);
+    const canAdminister = this.access.isAdminOf(editor, tsc.course.campusId);
+    let lockedReason: string | null = null;
+    if (!canAdminister) {
+      const ownsIt =
+        editor.teacherId !== null &&
+        editor.teacherId === tsc.teacherId &&
+        (editor.teacherScope === null ||
+          editor.teacherScope.includes(tsc.course.campusId));
+      lockedReason = ownsIt
+        ? (this.teacherBlock(tsc, year.isActive, evaluation.period)?.message ??
+          null)
+        : 'No tiene permiso para registrar notas en esta evaluación';
+    }
+    return {
+      ...(await this.toDto(manager, institution, evaluation)),
+      canAdminister,
+      lockedReason,
+    };
   }
 
   async upsert(
@@ -268,23 +299,35 @@ export class ScoresService {
       if (today > period.endDate) return 'period-ended';
       return actor.teacherId === tsc.teacherId ? null : 'not-own-assignment';
     }
+    const block = this.teacherBlock(tsc, yearActive, period, today);
+    if (block) throw block;
+    return null;
+  }
+
+  /** Por qué el docente de la carga no puede registrar notas; null si puede. */
+  private teacherBlock(
+    tsc: Pick<TeacherSubjectCourseEntity, 'isActive'>,
+    yearActive: boolean,
+    period: Pick<PeriodEntity, 'startDate' | 'endDate'>,
+    today = schoolToday(),
+  ): ConflictException | ForbiddenException | null {
     if (!tsc.isActive) {
-      throw new ConflictException(
+      return new ConflictException(
         'La carga académica no está activa: solo un administrador puede corregir sus notas',
       );
     }
     if (!yearActive) {
-      throw new ForbiddenException(
+      return new ForbiddenException(
         'El año lectivo está inactivo: solo un administrador puede modificar sus notas',
       );
     }
     if (today < period.startDate) {
-      throw new ForbiddenException(
+      return new ForbiddenException(
         'El periodo aún no ha empezado: las notas se registran mientras está en curso',
       );
     }
     if (today > period.endDate) {
-      throw new ForbiddenException(
+      return new ForbiddenException(
         'El periodo ya terminó: solo un administrador puede corregir sus notas',
       );
     }
@@ -342,13 +385,13 @@ export class ScoresService {
     manager: EntityManager,
     institution: InstitutionEntity,
     evaluation: EvaluationEntity,
-  ): Promise<EvaluationScoresDto> {
+  ): Promise<Omit<EvaluationScoresDto, 'canAdminister' | 'lockedReason'>> {
     const rows = await manager.query<
       {
         studentId: string;
         firstName: string;
         lastName: string;
-        enrollmentStatus: string | null;
+        enrollmentStatus: EnrollmentStatus | null;
         score: string | null;
         updatedAt: Date | null;
       }[]

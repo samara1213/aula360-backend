@@ -311,6 +311,8 @@ describe('Notas y cuadro de notas (e2e)', () => {
       expect(res.body).toMatchObject({
         evaluation: { id: e1, percentage: 60 },
         scale: { min: 1, max: 5, passingScore: 3 },
+        canAdminister: false,
+        lockedReason: null,
       });
       const students = (res.body as { students: ScoreRow[] }).students;
       expect(students.map((s) => s.studentId).sort()).toEqual([s1, s2].sort());
@@ -400,7 +402,57 @@ describe('Notas y cuadro de notas (e2e)', () => {
     });
 
     it('el administrador de la sede del curso califica', async () => {
+      const res = await campusAdminA
+        .get(`/api/evaluations/${e2}/scores`)
+        .expect(200);
+      expect(res.body).toMatchObject({
+        canAdminister: true,
+        lockedReason: null,
+      });
       await putScores(campusAdminA, e2, [{ studentId: s1, score: 3 }], 200);
+    });
+
+    it('quien solo ve notas: lockedReason sin permiso y canAdminister false', async () => {
+      // Ve notas (rol propio de solo ver) y administra la carga: ve la planilla
+      // como administrador, pero no puede registrar.
+      const viewer = await ctx.data.createUser();
+      const readOnly = await ctx.data.createInstitutionRole(
+        institutionA.id,
+        ['evaluations', 'evaluations.evaluations', 'evaluations.scores'],
+        { viewOnly: true },
+      );
+      const loads = await ctx.data.createInstitutionRole(institutionA.id, [
+        'academic',
+        'academic.teacher-assignments',
+      ]);
+      for (const role of [readOnly, loads]) {
+        await ctx.dataSource.query(
+          'INSERT INTO user_institution_roles (user_id, institution_id, role_id) VALUES ($1, $2, $3)',
+          [viewer.id, institutionA.id, role.id],
+        );
+      }
+      const agent = await loginAs(viewer.email);
+      const res = await agent.get(`/api/evaluations/${e1}/scores`).expect(200);
+      expect(res.body).toMatchObject({ canAdminister: false });
+      expect((res.body as { lockedReason: string }).lockedReason).toMatch(
+        /No tiene permiso/,
+      );
+      await putScores(agent, e1, [{ studentId: s1, score: 4 }], 403);
+    });
+
+    it('GET /evaluations?courseId= dice si administra la sede del curso', async () => {
+      const list = async (agent: Agent, courseId: string) =>
+        (
+          (await agent.get(`/api/evaluations?courseId=${courseId}`).expect(200))
+            .body as { canAdminister?: boolean }
+        ).canAdminister;
+      expect(await list(adminA, courseA1)).toBe(true);
+      expect(await list(campusAdminA, courseA1)).toBe(true);
+      expect(await list(campusAdminA, courseA2)).toBe(false);
+      expect(await list(teacher1, courseA1)).toBe(false);
+      expect(await list(adminB, courseA1)).toBe(false);
+      const all = await adminA.get('/api/evaluations').expect(200);
+      expect(all.body).not.toHaveProperty('canAdminister');
     });
 
     it('el estudiante no ve el listado (404) ni registra (403)', async () => {
@@ -409,6 +461,20 @@ describe('Notas y cuadro de notas (e2e)', () => {
     });
 
     it('periodo terminado: el docente no (403), el administrador corrige', async () => {
+      const own = await teacher1
+        .get(`/api/evaluations/${ePast}/scores`)
+        .expect(200);
+      expect(own.body).toMatchObject({ canAdminister: false });
+      expect((own.body as { lockedReason: string }).lockedReason).toMatch(
+        /ya terminó/,
+      );
+      const admin = await adminA
+        .get(`/api/evaluations/${ePast}/scores`)
+        .expect(200);
+      expect(admin.body).toMatchObject({
+        canAdminister: true,
+        lockedReason: null,
+      });
       await putScores(teacher1, ePast, [{ studentId: s1, score: 4 }], 403);
       await putScores(adminA, ePast, [{ studentId: s1, score: 4 }], 200);
     });
@@ -444,7 +510,12 @@ describe('Notas y cuadro de notas (e2e)', () => {
         .patch(`/api/teacher-assignments/${tsc}/deactivate`)
         .expect(200);
       await putScores(teacher1, id, [{ studentId: s3, score: 4 }], 409);
-      await teacher1.get(`/api/evaluations/${id}/scores`).expect(200);
+      const locked = await teacher1
+        .get(`/api/evaluations/${id}/scores`)
+        .expect(200);
+      expect((locked.body as { lockedReason: string }).lockedReason).toMatch(
+        /no está activa/,
+      );
       // Reemplazado: no ve el cuadro del curso ni al estudiante (M1).
       await teacher1.get(gradebook).expect(404);
       await teacher1
@@ -505,6 +576,77 @@ describe('Notas y cuadro de notas (e2e)', () => {
       ).map((r) => r.status);
       expect(statuses).toEqual([200, 200]);
       await putScores(teacher1, e1, [{ studentId: s1, score: 4.5 }], 200);
+    });
+  });
+
+  describe('GET /teacher-assignments/mine/periods', () => {
+    const names = async (agent: Agent) =>
+      (
+        (await agent.get('/api/teacher-assignments/mine/periods').expect(200))
+          .body as { id: string }[]
+      ).map((p) => p.id);
+
+    it('periodos de los años en que el docente tiene carga activa, por fecha', async () => {
+      expect(await names(teacher1)).toEqual([
+        pastPeriod,
+        currentPeriod,
+        futurePeriod,
+      ]);
+      expect(await names(teacher2)).toEqual([pastPeriod, currentPeriod]);
+    });
+
+    it('un año en que solo tiene carga terminada no aparece', async () => {
+      const yearId = (
+        await post(adminA, '/api/academic-years', { year: futureYear + 1 }, 201)
+      ).id;
+      const periodId = (
+        await post(
+          adminA,
+          `/api/academic-years/${yearId}/periods`,
+          {
+            name: 'Otro año',
+            startDate: `${futureYear + 1}-02-01`,
+            endDate: `${futureYear + 1}-03-01`,
+          },
+          201,
+        )
+      ).id;
+      const gradeId = (
+        await post(adminA, '/api/grades', { name: `E2E ${suffix()}` }, 201)
+      ).id;
+      const courseId = (
+        await post(
+          adminA,
+          '/api/courses',
+          {
+            name: `60${suffix()}`,
+            gradeId,
+            campusId: campusA1.id,
+            academicYearId: yearId,
+          },
+          201,
+        )
+      ).id;
+      const tsc = (
+        await post(
+          adminA,
+          '/api/teacher-assignments',
+          { courseId, subjectId: math, teacherId: teacher1Id },
+          201,
+        )
+      ).id;
+      expect(await names(teacher1)).toContain(periodId);
+      await adminA
+        .patch(`/api/teacher-assignments/${tsc}/deactivate`)
+        .expect(200);
+      expect(await names(teacher1)).not.toContain(periodId);
+    });
+
+    it('sin carga, sin perfil de docente u otra institución: lista vacía', async () => {
+      expect(await names(teacher3)).toEqual([]);
+      expect(await names(student1)).toEqual([]);
+      expect(await names(adminA)).toEqual([]);
+      expect(await names(adminB)).toEqual([]);
     });
   });
 

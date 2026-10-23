@@ -233,4 +233,10 @@ export class EvaluationPageDto {
 
   @ApiProperty({ type: PaginationMetaDto })
   meta: PaginationMetaDto;
+
+  @ApiPropertyOptional({
+    description:
+      'Solo con courseId: administra las evaluaciones de la sede del curso (también fuera de plazo y en cargas de otros). Solo orienta a la interfaz: cada escritura se vuelve a validar.',
+  })
+  canAdminister?: boolean;
 }

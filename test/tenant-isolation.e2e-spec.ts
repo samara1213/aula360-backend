@@ -951,6 +951,15 @@ describe('Aislamiento entre instituciones (e2e)', () => {
       MATRIX_TIMEOUT,
     );
 
+    it('/teacher-assignments/mine/periods: el docente de A solo ve los periodos de A', async () => {
+      const res = await teacherA
+        .get('/api/teacher-assignments/mine/periods')
+        .expect(200);
+      expect((res.body as { id: string }[]).map((p) => p.id)).toEqual([
+        a.period,
+      ]);
+    });
+
     it('docente, estudiante, administrador de sede y usuario de A y B tienen sesión útil', async () => {
       await teacherA.get('/api/teacher-assignments/mine').expect(200);
       await studentA.get('/api/gradebook/mine').expect(200);
@@ -1522,6 +1531,10 @@ describe('Aislamiento entre instituciones (e2e)', () => {
       {
         route: 'GET /teacher-assignments/mine',
         path: '/teacher-assignments/mine',
+      },
+      {
+        route: 'GET /teacher-assignments/mine/periods',
+        path: '/teacher-assignments/mine/periods',
       },
       { route: 'GET /gradebook/mine', path: '/gradebook/mine' },
       {

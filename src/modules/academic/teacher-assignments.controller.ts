@@ -32,6 +32,7 @@ import {
   TeacherAssignmentQueryDto,
   TeacherAssignmentResponseDto,
 } from './dto/teacher-assignment.dto';
+import { PeriodResponseDto } from './dto/period.dto';
 import {
   TEACHER_ASSIGNMENTS_PERMISSION,
   TeacherAssignmentsService,
@@ -69,6 +70,18 @@ export class TeacherAssignmentsController {
     @CurrentUser() user: AuthUser,
   ): Promise<TeacherAssignmentResponseDto[]> {
     return this.assignments.findMine(user);
+  }
+
+  // Sin @RequirePermission, como /mine: el rol TEACHER no ve /periods.
+  @Get('mine/periods')
+  @ApiOperation({
+    summary: 'Periodos de mi carga activa (docente)',
+    description:
+      'Periodos de los años activos en que tiene carga activa. Lista vacía si no tiene perfil de docente en la institución activa.',
+  })
+  @ApiOkResponse({ type: [PeriodResponseDto] })
+  findMinePeriods(@CurrentUser() user: AuthUser): Promise<PeriodResponseDto[]> {
+    return this.assignments.findMinePeriods(user);
   }
 
   @Get(':id')

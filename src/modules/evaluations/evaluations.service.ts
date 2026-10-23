@@ -17,6 +17,7 @@ import { schoolToday } from '../../common/utils/school-date';
 import { rejectNullFields } from '../../common/validators/reject-null-fields';
 import { mapIntegrityError } from '../academic/academic.shared';
 import { AcademicYearEntity } from '../academic/entities/academic-year.entity';
+import { CourseEntity } from '../academic/entities/course.entity';
 import { PeriodEntity } from '../academic/entities/period.entity';
 import { TeacherSubjectCourseEntity } from '../academic/entities/teacher-subject-course.entity';
 import {
@@ -74,12 +75,15 @@ export class EvaluationsService {
   async findAll(
     user: AuthUser,
     query: EvaluationQueryDto,
-  ): Promise<Paginated<EvaluationResponseDto>> {
+  ): Promise<Paginated<EvaluationResponseDto> & { canAdminister?: boolean }> {
     const actor = await this.access.resolve(
       user,
       EVALUATIONS_PERMISSION,
       'view',
     );
+    const canAdminister = query.courseId
+      ? await this.administersCourse(user, query.courseId)
+      : undefined;
     const qb = this.baseQuery(this.dataSource.manager, actor);
     if (query.teacherAssignmentId) {
       qb.andWhere('e.teacher_subject_course_id = :tscId', {
@@ -101,11 +105,40 @@ export class EvaluationsService {
       .addOrderBy('e.id', 'ASC');
     const { skip, take } = toSkipTake(query);
     const [rows, total] = await qb.skip(skip).take(take).getManyAndCount();
-    return paginate(
-      rows.map((row) => EvaluationResponseDto.from(row)),
-      total,
-      query,
+    return {
+      ...paginate(
+        rows.map((row) => EvaluationResponseDto.from(row)),
+        total,
+        query,
+      ),
+      ...(canAdminister !== undefined ? { canAdminister } : {}),
+    };
+  }
+
+  /**
+   * Si administra las evaluaciones del curso (su sede), para que la interfaz
+   * no ofrezca lo que se negaría (B1 de la 3e-1). Curso de otra institución o
+   * inexistente: false, sin distinguirlo.
+   */
+  private async administersCourse(
+    user: AuthUser,
+    courseId: string,
+  ): Promise<boolean> {
+    const editor = await this.access.resolve(
+      user,
+      EVALUATIONS_PERMISSION,
+      'update',
     );
+    const course = await this.dataSource
+      .getRepository(CourseEntity)
+      .createQueryBuilder('c')
+      .innerJoin('c.grade', 'g')
+      .where('c.id = :courseId', { courseId })
+      .andWhere('g.institution_id = :institutionId', {
+        institutionId: editor.institutionId,
+      })
+      .getOne();
+    return course ? this.access.isAdminOf(editor, course.campusId) : false;
   }
 
   async findOne(user: AuthUser, id: string): Promise<EvaluationResponseDto> {

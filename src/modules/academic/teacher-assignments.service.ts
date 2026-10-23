@@ -33,7 +33,9 @@ import {
   TeacherAssignmentQueryDto,
   TeacherAssignmentResponseDto,
 } from './dto/teacher-assignment.dto';
+import { PeriodResponseDto } from './dto/period.dto';
 import { CourseEntity } from './entities/course.entity';
+import { PeriodEntity } from './entities/period.entity';
 import { SubjectEntity } from './entities/subject.entity';
 import { TeacherSubjectCourseEntity } from './entities/teacher-subject-course.entity';
 
@@ -128,6 +130,38 @@ export class TeacherAssignmentsService {
     return (await qb.getMany()).map((row) =>
       TeacherAssignmentResponseDto.from(row),
     );
+  }
+
+  /**
+   * Periodos de los años (activos) en que el propio docente tiene carga
+   * activa, para elegir dónde evaluar: el rol TEACHER no ve /periods. Mismas
+   * condiciones que findMine (sin perfil o sin rol TEACHER, lista vacía).
+   */
+  async findMinePeriods(user: AuthUser): Promise<PeriodResponseDto[]> {
+    const institutionId = activeInstitutionId(user);
+    const teacher = await this.dataSource
+      .getRepository(TeacherEntity)
+      .findOneBy({ userId: user.userId, institutionId });
+    if (
+      !teacher ||
+      !(await hasActiveTeacherRole(this.dataSource, user.userId, institutionId))
+    ) {
+      return [];
+    }
+    const years = this.baseQuery(this.dataSource.manager, institutionId, null)
+      .select('c.academic_year_id')
+      .andWhere('t.teacher_id = :teacherId')
+      .andWhere('t.is_active = true')
+      .andWhere('y.is_active = true');
+    const rows = await this.dataSource
+      .getRepository(PeriodEntity)
+      .createQueryBuilder('p')
+      .where(`p.academic_year_id IN (${years.getQuery()})`)
+      .setParameters({ ...years.getParameters(), teacherId: teacher.id })
+      .orderBy('p.start_date', 'ASC')
+      .addOrderBy('p.name', 'ASC')
+      .getMany();
+    return rows.map((row) => PeriodResponseDto.from(row));
   }
 
   async findOne(

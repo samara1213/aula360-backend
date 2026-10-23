@@ -1,4 +1,4 @@
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
   ArrayMaxSize,
@@ -9,6 +9,10 @@ import {
   ValidateIf,
   ValidateNested,
 } from 'class-validator';
+import {
+  ENROLLMENT_STATUSES,
+  type EnrollmentStatus,
+} from '../../enrollments/entities/enrollment.entity';
 import { EvaluationResponseDto } from './evaluation.dto';
 
 /** Filas por lote: más que un curso grande, menos que un abuso. */
@@ -16,7 +20,8 @@ export const MAX_SCORES_BATCH = 200;
 
 export class ScoreEntryDto {
   @ApiProperty({
-    description: 'UUID del estudiante (su usuario)',
+    description:
+      'UUID del estudiante (su perfil en students, no el del usuario)',
     format: 'uuid',
   })
   @IsUUID()
@@ -60,7 +65,8 @@ export class GradingScaleDto {
 
 export class ScoreStudentDto {
   @ApiProperty({
-    description: 'UUID del estudiante (su usuario)',
+    description:
+      'UUID del estudiante (su perfil en students, no el del usuario)',
     format: 'uuid',
   })
   studentId: string;
@@ -72,12 +78,13 @@ export class ScoreStudentDto {
   lastName: string;
 
   @ApiProperty({
+    enum: ENROLLMENT_STATUSES,
     nullable: true,
     example: 'ENROLLED',
     description:
       'Estado de su matrícula en el curso; null si ya no está matriculado en él pero conserva la nota',
   })
-  enrollmentStatus: string | null;
+  enrollmentStatus: EnrollmentStatus | null;
 
   @ApiProperty({ type: Number, nullable: true, example: 4.5 })
   score: number | null;
@@ -105,4 +112,18 @@ export class EvaluationScoresDto {
       'Estudiantes matriculados en el curso (cualquier estado) y quienes ya tienen nota',
   })
   students: ScoreStudentDto[];
+
+  @ApiPropertyOptional({
+    description:
+      'Solo en GET: administra la sede del curso (corrige fuera de plazo, en cargas inactivas y a estudiantes retirados). Solo orienta a la interfaz: el PUT vuelve a validar todo.',
+  })
+  canAdminister?: boolean;
+
+  @ApiPropertyOptional({
+    type: String,
+    nullable: true,
+    description:
+      'Solo en GET: por qué no puede registrar notas (periodo terminado, carga inactiva, sin permiso...); null si puede',
+  })
+  lockedReason?: string | null;
 }
