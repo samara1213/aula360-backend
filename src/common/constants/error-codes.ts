@@ -13,6 +13,11 @@ export const ERROR_CODES = {
    * robo, las cookies nuevas ya están en el navegador (401, sin borrarlas).
    */
   REFRESH_TOKEN_ROTATED: 'REFRESH_TOKEN_ROTATED',
+  /**
+   * Al boletín le faltan definitivas: se puede generar de todos modos con
+   * force (409). Sin ninguna definitiva no lleva este código.
+   */
+  REPORT_CARD_PENDING_FINALS: 'REPORT_CARD_PENDING_FINALS',
 } as const;
 
 export type ErrorCode = (typeof ERROR_CODES)[keyof typeof ERROR_CODES];

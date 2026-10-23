@@ -15,6 +15,10 @@ import {
 import { AuthUser } from '../../common/interfaces/auth-user.interface';
 import { activeInstitutionId } from '../../common/utils/active-institution';
 import { schoolToday } from '../../common/utils/school-date';
+import {
+  ERROR_CODES,
+  type ErrorCode,
+} from '../../common/constants/error-codes';
 import { SIGNED_URL_TTL_SECONDS } from '../../storage/storage.constants';
 import { StorageDeletionsService } from '../../storage/storage-deletions.service';
 import { StorageService } from '../../storage/storage.service';
@@ -71,7 +75,11 @@ const LOCK_TIMEOUT = '5s';
  * Faltan definitivas, no hay ninguna o la matrícula ya no está vigente: en la
  * masiva, se omite.
  */
-class SkipReportCardException extends ConflictException {}
+class SkipReportCardException extends ConflictException {
+  constructor(message: string, code?: ErrorCode) {
+    super(code ? { message, code } : message);
+  }
+}
 
 /** Opciones de una generación (la masiva reutiliza el logo y filtra estados). */
 interface GenerateOptions {
@@ -122,6 +130,19 @@ interface Snapshot {
  * - Descarga con URL firmada de corta vida; generar y descargar quedan en la
  *   auditoría (log JSON).
  */
+/** Estudiante de una matrícula (con student.user) para el resumen de la generación masiva. */
+function who(e: EnrollmentEntity): {
+  studentId: string;
+  firstName: string;
+  lastName: string;
+} {
+  return {
+    studentId: e.studentId,
+    firstName: e.student.user.firstName,
+    lastName: e.student.user.lastName,
+  };
+}
+
 @Injectable()
 export class ReportCardsService {
   private readonly logger = new Logger(ReportCardsService.name);
@@ -196,8 +217,8 @@ export class ReportCardsService {
     const enrollments = await manager
       .getRepository(EnrollmentEntity)
       .createQueryBuilder('e')
-      .innerJoin('e.student', 's')
-      .innerJoin('s.user', 'u')
+      .innerJoinAndSelect('e.student', 's')
+      .innerJoinAndSelect('s.user', 'u')
       .where('e.course_id = :courseId', { courseId: course.id })
       .andWhere({ status: In([...BATCH_STATUSES]) })
       .orderBy('u.lastName', 'ASC')
@@ -237,6 +258,7 @@ export class ReportCardsService {
         const current = await this.stillAdmin(user, course.campusId);
         if (!current) {
           aborted = true;
+          // Ya no administra la sede: sin los nombres de los que faltaban (B3 de la 3f-1).
           for (const e of enrollments.slice(i)) {
             result.failed.push({ studentId: e.studentId });
           }
@@ -253,14 +275,15 @@ export class ReportCardsService {
           ),
         );
         outcomes.forEach((outcome, index) => {
-          const studentId = chunk[index].studentId;
+          const enrollment = chunk[index];
+          const studentId = enrollment.studentId;
           if (outcome.status === 'fulfilled') {
             result.generated++;
             return;
           }
           const error: unknown = outcome.reason;
           if (error instanceof SkipReportCardException) {
-            result.skipped.push({ studentId, reason: error.message });
+            result.skipped.push({ ...who(enrollment), reason: error.message });
             return;
           }
           if (!(error instanceof HttpException)) {
@@ -269,7 +292,7 @@ export class ReportCardsService {
               `Boletín de ${studentId} no generado: ${errorLabel(error)}`,
             );
           }
-          result.failed.push({ studentId });
+          result.failed.push(who(enrollment));
         });
       }
     } finally {
@@ -464,6 +487,57 @@ export class ReportCardsService {
 
   /** URL firmada del PDF: el propio estudiante o el administrador. */
   async download(user: AuthUser, id: string): Promise<ReportCardDownloadDto> {
+    const { card, own, institutionId } = await this.findDownloadable(user, id);
+    const url = await this.storage.createSignedUrl(
+      BUCKET,
+      card.pdfPath,
+      SIGNED_URL_TTL_SECONDS,
+    );
+    this.auditDownload(user, institutionId, card, own, 'signed-url');
+    return { url, expiresIn: SIGNED_URL_TTL_SECONDS };
+  }
+
+  /**
+   * El PDF por el backend (M1 de la 3f-1): con la URL firmada, el navegador
+   * lo guardaba en su caché de disco (Storage responde max-age), recuperable
+   * en un equipo compartido. El controller lo envía con no-store.
+   */
+  async pdf(user: AuthUser, id: string): Promise<Buffer> {
+    const { card, own, institutionId } = await this.findDownloadable(user, id);
+    const buffer = await this.storage.download(BUCKET, card.pdfPath);
+    this.auditDownload(user, institutionId, card, own, 'pdf');
+    return buffer;
+  }
+
+  private auditDownload(
+    user: AuthUser,
+    institutionId: string,
+    card: ReportCardEntity,
+    own: boolean,
+    via: 'signed-url' | 'pdf',
+  ): void {
+    this.logger.log(
+      JSON.stringify({
+        audit: 'report-card.downloaded',
+        actorId: user.userId,
+        institutionId,
+        reportCardId: card.id,
+        studentId: card.studentId,
+        own,
+        via,
+      }),
+    );
+  }
+
+  /** El propio estudiante o el administrador de la sede del curso; si no, 404. */
+  private async findDownloadable(
+    user: AuthUser,
+    id: string,
+  ): Promise<{
+    card: ReportCardEntity & { pdfPath: string };
+    own: boolean;
+    institutionId: string;
+  }> {
     const institutionId = activeInstitutionId(user);
     const manager = this.dataSource.manager;
     const student = await this.ownStudent(manager, user, institutionId);
@@ -489,22 +563,11 @@ export class ReportCardsService {
         .getOne();
     }
     if (!card?.pdfPath) throw new NotFoundException('Boletín no encontrado');
-    const url = await this.storage.createSignedUrl(
-      BUCKET,
-      card.pdfPath,
-      SIGNED_URL_TTL_SECONDS,
-    );
-    this.logger.log(
-      JSON.stringify({
-        audit: 'report-card.downloaded',
-        actorId: user.userId,
-        institutionId,
-        reportCardId: card.id,
-        studentId: card.studentId,
-        own,
-      }),
-    );
-    return { url, expiresIn: SIGNED_URL_TTL_SECONDS };
+    return {
+      card: card as ReportCardEntity & { pdfPath: string },
+      own,
+      institutionId,
+    };
   }
 
   /**
@@ -670,7 +733,8 @@ export class ReportCardsService {
     }
     if (snapshot.pending.length && !force) {
       throw new SkipReportCardException(
-        `Faltan definitivas en: ${snapshot.pending.join(', ')}. Use force para generarlo con esas materias pendientes`,
+        `Faltan definitivas en: ${snapshot.pending.join(', ')}. Se puede generar de todos modos, con esas materias pendientes`,
+        ERROR_CODES.REPORT_CARD_PENDING_FINALS,
       );
     }
   }

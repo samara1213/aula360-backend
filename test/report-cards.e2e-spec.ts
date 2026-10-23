@@ -129,7 +129,7 @@ describe('Boletines (e2e)', () => {
       url,
       { studentId, periodId: period, ...(force ? { force } : {}) },
       status,
-    ) as unknown as Promise<ReportCard & { message?: string }>;
+    ) as unknown as Promise<ReportCard & { message?: string; code?: string }>;
   const scores = (
     evaluationId: string,
     rows: { studentId: string; score: number | null }[],
@@ -326,12 +326,16 @@ describe('Boletines (e2e)', () => {
     it('sin ninguna definitiva: 409 aunque venga force', async () => {
       const body = await generate(adminA, s3, 409, true);
       expect(body.message).toMatch(/ninguna definitiva/);
+      // No se puede forzar: sin el código de definitivas pendientes.
+      expect(body).not.toHaveProperty('code');
     });
 
     it('con materias pendientes: 409 con sus nombres; con force se genera con promedio parcial', async () => {
       const body = await generate(adminA, s1, 409);
       expect(body.message).toMatch(/Física/);
       expect(body.message).not.toMatch(/Matemáticas/);
+      // Código estable para que la interfaz ofrezca generarlo de todos modos.
+      expect(body).toMatchObject({ code: 'REPORT_CARD_PENDING_FINALS' });
 
       const capture = captureHtml();
       try {
@@ -582,6 +586,30 @@ describe('Boletines (e2e)', () => {
       expect((await list(student2)).meta.total).toBe(0);
     });
 
+    it('el PDF por el backend: sin caché, solo el propio estudiante o el administrador (M1 de la 3f-1)', async () => {
+      const own = await student1
+        .get(`${url}/${card1.id}/pdf`)
+        .buffer(true)
+        .parse((res, done) => {
+          const chunks: Buffer[] = [];
+          res.on('data', (chunk: Buffer) => chunks.push(chunk));
+          res.on('end', () => done(null, Buffer.concat(chunks)));
+        })
+        .expect(200);
+      expect(own.headers['content-type']).toMatch(/application\/pdf/);
+      expect(own.headers['cache-control']).toBe('no-store');
+      expect(own.headers['content-disposition']).toBe(
+        'inline; filename="boletin.pdf"',
+      );
+      expect(own.headers['x-content-type-options']).toBe('nosniff');
+      expect((own.body as Buffer).subarray(0, 4).toString()).toBe('%PDF');
+      await adminA.get(`${url}/${card1.id}/pdf`).expect(200);
+      await student2.get(`${url}/${card1.id}/pdf`).expect(404);
+      await teacher1.get(`${url}/${card1.id}/pdf`).expect(403);
+      await adminB.get(`${url}/${card1.id}/pdf`).expect(404);
+      await adminA.get(`${url}/no-es-uuid/pdf`).expect(400);
+    });
+
     it('otra institución: 404 al descargar; id inválido: 400', async () => {
       await adminB.get(`${url}/${card1.id}/download`).expect(404);
       await adminA.get(`${url}/no-es-uuid/download`).expect(400);
@@ -627,7 +655,12 @@ describe('Boletines (e2e)', () => {
       const result = await batch(adminA, courseA1, 200);
       expect(result).toMatchObject({ total: 2, generated: 1, failed: [] });
       expect(result.skipped).toEqual([
-        { studentId: s2, reason: expect.stringMatching(/Física/) as string },
+        {
+          studentId: s2,
+          firstName: expect.any(String) as string,
+          lastName: expect.any(String) as string,
+          reason: expect.stringMatching(/Física/) as string,
+        },
       ]);
     });
 
@@ -657,6 +690,12 @@ describe('Boletines (e2e)', () => {
       expect(result.generated).toBe(1);
       expect(result.failed).toHaveLength(1);
       expect([s1, s2]).toContain(result.failed[0].studentId);
+      // Con el nombre, para que la interfaz diga a quién reintentar.
+      expect(result.failed[0]).toEqual({
+        studentId: result.failed[0].studentId,
+        firstName: expect.any(String) as string,
+        lastName: expect.any(String) as string,
+      });
     });
 
     it('curso sin matriculados: resumen vacío', async () => {

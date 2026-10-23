@@ -10,7 +10,8 @@ const toBoolean = ({ value }: { value: unknown }) =>
 
 export class GenerateReportCardDto {
   @ApiProperty({
-    description: 'UUID del estudiante (su usuario)',
+    description:
+      'UUID del estudiante (su perfil en students, no el del usuario)',
     format: 'uuid',
   })
   @IsUUID()
@@ -54,21 +55,42 @@ export class BatchReportCardsDto {
 
 class BatchSkippedDto {
   @ApiProperty({
-    description: 'UUID del estudiante (su usuario)',
+    description:
+      'UUID del estudiante (su perfil en students, no el del usuario)',
     format: 'uuid',
   })
   studentId: string;
 
-  @ApiProperty({ example: 'Faltan definitivas en: Inglés. Use force para...' })
+  @ApiProperty({ example: 'Mateo' })
+  firstName: string;
+
+  @ApiProperty({ example: 'Rojas' })
+  lastName: string;
+
+  @ApiProperty({
+    example:
+      'Faltan definitivas en: Inglés. Se puede generar de todos modos, con esas materias pendientes',
+  })
   reason: string;
 }
 
 class BatchFailedDto {
   @ApiProperty({
-    description: 'UUID del estudiante (su usuario)',
+    description:
+      'UUID del estudiante (su perfil en students, no el del usuario)',
     format: 'uuid',
   })
   studentId: string;
+
+  @ApiPropertyOptional({
+    example: 'Mateo',
+    description:
+      'Sin nombre si el lote se cortó porque quien lo pidió ya no administra la sede',
+  })
+  firstName?: string;
+
+  @ApiPropertyOptional({ example: 'Rojas' })
+  lastName?: string;
 }
 
 export class BatchReportCardsResultDto {

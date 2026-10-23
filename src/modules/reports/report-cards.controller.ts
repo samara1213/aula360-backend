@@ -2,12 +2,14 @@ import {
   Body,
   Controller,
   Get,
+  Header,
   HttpCode,
   HttpStatus,
   Param,
   ParseUUIDPipe,
   Post,
   Query,
+  StreamableFile,
 } from '@nestjs/common';
 import {
   ApiBadGatewayResponse,
@@ -18,6 +20,7 @@ import {
   ApiNotFoundResponse,
   ApiOkResponse,
   ApiOperation,
+  ApiProduces,
   ApiServiceUnavailableResponse,
   ApiTags,
   ApiTooManyRequestsResponse,
@@ -132,6 +135,35 @@ export class ReportCardsController {
   @ApiNotFoundResponse({ description: 'Sin perfil de estudiante' })
   mine(@CurrentUser() user: AuthUser): Promise<OwnReportCardDto[]> {
     return this.reportCards.mine(user);
+  }
+
+  @Get(':id/pdf')
+  @RequirePermission(REPORT_CARDS_PERMISSION, 'view')
+  @Throttle(PEOPLE_LIST_THROTTLE)
+  @Header('Cache-Control', 'no-store')
+  @ApiOperation({
+    summary: 'El PDF del boletín',
+    description:
+      'El propio estudiante o el administrador de la sede del curso. Se envía con no-store: no queda en la caché del navegador (la URL firmada de Storage sí lo dejaba).',
+  })
+  @ApiProduces('application/pdf')
+  @ApiOkResponse({
+    description: 'PDF (no se guarda en caché)',
+    content: {
+      'application/pdf': { schema: { type: 'string', format: 'binary' } },
+    },
+  })
+  @ApiNotFoundResponse({ description: 'Boletín no encontrado' })
+  @ApiBadGatewayResponse({ description: 'Fallo de Storage' })
+  @ApiTooManyRequestsResponse({ description: 'Más de 60 por minuto' })
+  async pdf(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+  ): Promise<StreamableFile> {
+    return new StreamableFile(await this.reportCards.pdf(user, id), {
+      type: 'application/pdf',
+      disposition: 'inline; filename="boletin.pdf"',
+    });
   }
 
   @Get(':id/download')

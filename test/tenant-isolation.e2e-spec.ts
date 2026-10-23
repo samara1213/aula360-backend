@@ -690,6 +690,11 @@ describe('Aislamiento entre instituciones (e2e)', () => {
         expected: nf('Boletín no encontrado'),
       },
       {
+        route: 'GET /report-cards/:id/pdf',
+        path: `/report-cards/${t.reportCard}/pdf`,
+        expected: nf('Boletín no encontrado'),
+      },
+      {
         route: 'GET /users/:id',
         path: `/users/${t.student.userId}`,
         expected: user,

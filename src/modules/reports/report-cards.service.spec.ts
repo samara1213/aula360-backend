@@ -29,6 +29,7 @@ describe('ReportCardsService.generateBatch', () => {
     const q: Record<string, jest.Mock> = {};
     for (const m of [
       'innerJoin',
+      'innerJoinAndSelect',
       'where',
       'andWhere',
       'orderBy',
@@ -40,7 +41,21 @@ describe('ReportCardsService.generateBatch', () => {
     q.getMany = jest.fn().mockResolvedValue(result);
     return q;
   };
-  let enrollments: { studentId: string }[];
+  type Enrollment = {
+    studentId: string;
+    student: { user: { firstName: string; lastName: string } };
+  };
+  let enrollments: Enrollment[];
+  /** Matrícula con el nombre del estudiante (el resumen lo lleva). */
+  const enrolled = (studentId: string): Enrollment => ({
+    studentId,
+    student: { user: { firstName: 'Ana', lastName: studentId } },
+  });
+  const named = (studentId: string) => ({
+    studentId,
+    firstName: 'Ana',
+    lastName: studentId,
+  });
   const userExists = jest.fn();
   const repos = () =>
     new Map<unknown, unknown>([
@@ -92,17 +107,15 @@ describe('ReportCardsService.generateBatch', () => {
     service.generateBatch(user, { courseId: 'c-1', periodId: 'p-1' });
 
   it(`más de ${MAX_BATCH_STUDENTS} matriculados: 400 sin generar nada (M2)`, async () => {
-    enrollments = Array.from({ length: MAX_BATCH_STUDENTS + 1 }, (_, i) => ({
-      studentId: `s-${i}`,
-    }));
+    enrollments = Array.from({ length: MAX_BATCH_STUDENTS + 1 }, (_, i) =>
+      enrolled(`s-${i}`),
+    );
     await expect(run()).rejects.toThrow(BadRequestException);
     expect(generateFor).not.toHaveBeenCalled();
   });
 
   it('de a 2 y, si pierde la administración de la sede, corta el lote (M5)', async () => {
-    enrollments = ['s-1', 's-2', 's-3', 's-4', 's-5'].map((studentId) => ({
-      studentId,
-    }));
+    enrollments = ['s-1', 's-2', 's-3', 's-4', 's-5'].map(enrolled);
     // Inicio, primer grupo y segundo grupo administra; el tercero ya no.
     access.isAdminOf
       .mockReturnValueOnce(true)
@@ -115,12 +128,13 @@ describe('ReportCardsService.generateBatch', () => {
       total: 5,
       generated: 4,
       skipped: [],
+      // Ya no administra la sede: sin nombres (B3 de la 3f-1).
       failed: [{ studentId: 's-5' }],
     });
   });
 
   it('usuario desactivado a mitad del lote: no sigue', async () => {
-    enrollments = ['s-1', 's-2', 's-3'].map((studentId) => ({ studentId }));
+    enrollments = ['s-1', 's-2', 's-3'].map(enrolled);
     userExists.mockResolvedValueOnce(true).mockResolvedValue(false);
     const result = await run();
     expect(generateFor).toHaveBeenCalledTimes(2);
@@ -128,12 +142,12 @@ describe('ReportCardsService.generateBatch', () => {
   });
 
   it('un rechazo que no es Error no rompe el resumen (B2)', async () => {
-    enrollments = [{ studentId: 's-1' }, { studentId: 's-2' }];
+    enrollments = [enrolled('s-1'), enrolled('s-2')];
     generateFor.mockRejectedValueOnce(undefined);
     const result = await run();
     expect(result).toMatchObject({
       generated: 1,
-      failed: [{ studentId: 's-1' }],
+      failed: [named('s-1')],
     });
   });
 });
