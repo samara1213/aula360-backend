@@ -1,4 +1,10 @@
-import { Module } from '@nestjs/common';
+import {
+  MiddlewareConsumer,
+  Module,
+  NestModule,
+  RequestMethod,
+} from '@nestjs/common';
+import { fetchOnlyMiddleware } from '../../common/middleware/fetch-only.middleware';
 import { EvaluationsModule } from '../evaluations/evaluations.module';
 import { SecurityModule } from '../security/security.module';
 import { PdfRendererService } from './pdf-renderer.service';
@@ -24,4 +30,13 @@ import { ReportTemplatesService } from './report-templates.service';
     ReportCardsService,
   ],
 })
-export class ReportsModule {}
+export class ReportsModule implements NestModule {
+  // Las vistas previas lanzan Chromium: solo con fetch desde la aplicación, y
+  // el rechazo ocurre antes del límite de peticiones (B1 de la 3g-1).
+  configure(consumer: MiddlewareConsumer): void {
+    consumer.apply(fetchOnlyMiddleware()).forRoutes({
+      path: 'institutions/:institutionId/report-card-templates/:id/preview',
+      method: RequestMethod.GET,
+    });
+  }
+}

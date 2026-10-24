@@ -60,7 +60,10 @@ const PDF_RESPONSE = {
  * SUPER_ADMIN: el HTML se procesa en el servidor (con Chromium endurecido).
  */
 @ApiTags('report-card-templates')
-@ApiForbiddenResponse({ description: 'Solo SUPER_ADMIN' })
+@ApiForbiddenResponse({
+  description:
+    'Solo SUPER_ADMIN. Las vistas previas, además, solo con fetch desde la aplicación (Fetch Metadata: ni otro sitio, ni navegación, ni carga como recurso)',
+})
 @ApiNotFoundResponse({ description: 'Institución o plantilla no encontrada' })
 @SuperAdminOnly()
 @Controller('institutions/:institutionId/report-card-templates')

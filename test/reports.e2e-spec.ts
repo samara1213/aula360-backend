@@ -337,6 +337,40 @@ describe('Niveles de desempeño y plantillas de boletín (e2e)', () => {
       }
     });
 
+    it('vista previa: solo con fetch desde la aplicación (Fetch Metadata)', async () => {
+      const rejected: Record<string, string>[] = [
+        { 'Sec-Fetch-Site': 'cross-site', 'Sec-Fetch-Mode': 'cors' },
+        // Otro subdominio del mismo sitio que navega (un enlace).
+        { 'Sec-Fetch-Site': 'same-site', 'Sec-Fetch-Mode': 'navigate' },
+        {
+          'Sec-Fetch-Site': 'same-site',
+          'Sec-Fetch-Mode': 'no-cors',
+          'Sec-Fetch-Dest': 'image',
+        },
+      ];
+      for (const url of [
+        `${templatesUrl(institutionA.id)}/${first.id}/preview`,
+        `${templatesUrl(institutionA.id)}/system/preview`,
+      ]) {
+        for (const headers of rejected) {
+          const res = await superAdmin.get(url).set(headers).expect(403);
+          expect((res.body as { message: string }).message).toBe(
+            'Solo se puede pedir desde la aplicación',
+          );
+        }
+        await superAdmin
+          .get(url)
+          .set({
+            'Sec-Fetch-Site': 'same-origin',
+            'Sec-Fetch-Mode': 'cors',
+            'Sec-Fetch-Dest': 'empty',
+          })
+          .buffer(true)
+          .parse(binary)
+          .expect(200);
+      }
+    });
+
     it('archivo alterado en Storage (SHA-256 distinto): 502 y no se usa', async () => {
       const temp = (
         await upload(superAdmin, institutionA.id, TEMPLATE('Alterada')).expect(
