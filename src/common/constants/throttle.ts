@@ -139,6 +139,14 @@ export const REPORT_CARD_GENERATE_THROTTLE = {
 };
 
 /**
+ * Informes de la CSP (POST /csp-reports, sin sesión): 60 por minuto por IP
+ * (un colegio entero puede salir por una sola IP; B5 de la revisión). El log
+ * tiene además su tope por proceso (MAX_LOG_LINES_PER_MINUTE).
+ * Uso: @Throttle(CSP_REPORT_THROTTLE)
+ */
+export const CSP_REPORT_THROTTLE = { default: { ttl: 60_000, limit: 60 } };
+
+/**
  * Generación masiva de boletines (un curso entero): 3 por minuto por usuario.
  * Lo que de verdad la limita es que solo corre una por institución a la vez.
  * Uso: @Throttle(REPORT_CARD_BATCH_THROTTLE)

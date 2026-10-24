@@ -3,14 +3,23 @@ import { ConfigService } from '@nestjs/config';
 import { SwaggerModule } from '@nestjs/swagger';
 import * as cookieParser from 'cookie-parser';
 import helmet from 'helmet';
-import { bodyParserMiddlewares } from './common/middleware/body-parser.middleware';
+import {
+  bodyParserMiddlewares,
+  cspReportParser,
+} from './common/middleware/body-parser.middleware';
 import { originCheckMiddleware } from './common/middleware/origin-check.middleware';
 import { createOpenApiDocument } from './common/swagger/openapi';
 import { noStoreMiddleware } from './common/middleware/no-store.middleware';
 import { uploadSizeMiddleware } from './common/middleware/upload-size.middleware';
+import {
+  CSP_REPORT_MAX_BYTES,
+  LEGACY_REPORT_TYPE,
+  REPORTING_TYPE,
+} from './modules/csp-reports/csp-reports.service';
 import { MULTIPART_MAX_BYTES } from './storage/storage.constants';
 
 export const API_PREFIX = 'api';
+const CSP_REPORTS_PATH = `/${API_PREFIX}/csp-reports`;
 
 export function parseOrigins(value: string): string[] {
   return value
@@ -39,10 +48,14 @@ export function configureApp(app: INestApplication): void {
   app.use(`/${API_PREFIX}`, noStoreMiddleware());
   // Subidas demasiado grandes: se rechazan sin leer el cuerpo.
   app.use(uploadSizeMiddleware(MULTIPART_MAX_BYTES));
+  app.use(
+    CSP_REPORTS_PATH,
+    cspReportParser([REPORTING_TYPE, LEGACY_REPORT_TYPE], CSP_REPORT_MAX_BYTES),
+  );
   app.use(...bodyParserMiddlewares());
   app.use(cookieParser());
   // CSRF: rechaza métodos que modifican datos desde orígenes no permitidos.
-  app.use(originCheckMiddleware(origins));
+  app.use(originCheckMiddleware(origins, { exemptPaths: [CSP_REPORTS_PATH] }));
 
   // Las cookies requieren credentials: true y orígenes explícitos (nunca '*').
   app.enableCors({

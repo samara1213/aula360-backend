@@ -20,6 +20,7 @@ import { InstitutionsModule } from './modules/institutions/institutions.module';
 import { ReportsModule } from './modules/reports/reports.module';
 import { SecurityModule } from './modules/security/security.module';
 import { UsersModule } from './modules/users/users.module';
+import { CspReportsModule } from './modules/csp-reports/csp-reports.module';
 import { StorageModule } from './storage/storage.module';
 
 @Module({
@@ -54,6 +55,7 @@ import { StorageModule } from './storage/storage.module';
       skipIf: () => process.env.THROTTLE_DISABLED === 'true',
     }),
     StorageModule,
+    CspReportsModule,
     AuthModule,
     InstitutionsModule,
     SecurityModule,

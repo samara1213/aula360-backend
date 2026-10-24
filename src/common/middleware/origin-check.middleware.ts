@@ -20,11 +20,18 @@ function originOf(value: string | undefined): string | null {
  *
  * Es un middleware Express (app.use), por eso responde directamente con el mismo
  * formato que AllExceptionsFilter.
+ *
+ * exemptPaths: rutas sin sesión ni efectos ligados a cookies, que el navegador
+ * llama con un Origin que no se controla (los informes de la CSP).
  */
-export function originCheckMiddleware(allowedOrigins: string[]) {
+export function originCheckMiddleware(
+  allowedOrigins: string[],
+  { exemptPaths = [] }: { exemptPaths?: string[] } = {},
+) {
   const allowed = new Set(allowedOrigins);
+  const exempt = new Set(exemptPaths);
   return (req: Request, res: Response, next: NextFunction): void => {
-    if (SAFE_METHODS.has(req.method)) return next();
+    if (SAFE_METHODS.has(req.method) || exempt.has(req.path)) return next();
     const origin =
       originOf(req.headers.origin) ?? originOf(req.headers.referer);
     if (origin && !allowed.has(origin)) {

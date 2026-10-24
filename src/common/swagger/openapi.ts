@@ -62,6 +62,10 @@ const TAGS: [string, string][] = [
   ],
   ['report-cards', 'Boletines en PDF'],
   ['health', 'Estado de la API'],
+  [
+    'csp-reports',
+    'Violaciones de la CSP que informa el navegador (sin sesión)',
+  ],
 ];
 
 /** Documento OpenAPI completo (lo usan /api/docs y `yarn openapi:export`). */

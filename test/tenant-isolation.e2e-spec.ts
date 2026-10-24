@@ -2057,6 +2057,8 @@ describe('Aislamiento entre instituciones (e2e)', () => {
      */
     const EXEMPT: Record<string, string> = {
       'GET /health': 'pública, sin datos',
+      'POST /csp-reports':
+        'pública, sin datos de instituciones: solo campos acotados al log (csp-reports.e2e)',
       'POST /auth/login': 'pública: crea la sesión',
       'POST /auth/refresh-token': 'pública: solo la cookie propia',
       'POST /auth/logout': 'pública: solo la cookie propia',

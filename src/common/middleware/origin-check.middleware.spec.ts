@@ -1,13 +1,15 @@
 import { Request, Response } from 'express';
 import { originCheckMiddleware } from './origin-check.middleware';
 
-function run(method: string, headers: Record<string, string>) {
-  const middleware = originCheckMiddleware(['http://localhost:5173']);
+function run(method: string, headers: Record<string, string>, path = '/api/x') {
+  const middleware = originCheckMiddleware(['http://localhost:5173'], {
+    exemptPaths: ['/api/csp-reports'],
+  });
   const json = jest.fn();
   const status = jest.fn().mockReturnValue({ json });
   const next = jest.fn();
   middleware(
-    { method, headers, originalUrl: '/api/x' } as unknown as Request,
+    { method, headers, path, originalUrl: path } as unknown as Request,
     { status } as unknown as Response,
     next,
   );
@@ -44,6 +46,17 @@ describe('originCheckMiddleware', () => {
 
   it('rechaza un Origin malformado', () => {
     expect(run('POST', { origin: 'null' }).status).toHaveBeenCalledWith(403);
+  });
+
+  it('las rutas exentas (informes de la CSP) pasan con cualquier Origin; las demás no', () => {
+    for (const origin of ['null', 'https://evil.com']) {
+      expect(
+        run('POST', { origin }, '/api/csp-reports').next,
+      ).toHaveBeenCalled();
+    }
+    expect(
+      run('POST', { origin: 'https://evil.com' }, '/api/csp-reports/x').status,
+    ).toHaveBeenCalledWith(403);
   });
 
   it('deja pasar peticiones sin Origin ni Referer (clientes que no son navegador)', () => {

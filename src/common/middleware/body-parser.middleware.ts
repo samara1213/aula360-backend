@@ -41,6 +41,18 @@ function urlencodedParser(req: Request, res: Response, next: NextFunction) {
 }
 
 /**
+ * Cuerpo de los informes de la CSP (sus tipos no son application/json):
+ * solo en su ruta y con un tope propio; uno más grande responde 413 con el
+ * manejador de errores de bodyParserMiddlewares.
+ */
+export function cspReportParser(
+  types: string[],
+  limit: number,
+): RequestHandler {
+  return express.json({ type: types, limit });
+}
+
+/**
  * Parsers de cuerpo registrados por la app (Nest no añade los suyos si ya existen)
  * seguidos de un manejador de errores: los errores de body-parser ocurren antes de
  * Nest, así que AllExceptionsFilter no los ve y Nest respondería con el mensaje
