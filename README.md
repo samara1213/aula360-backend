@@ -19,8 +19,13 @@ yarn seed                 # datos base (menús, roles, permisos, SUPER_ADMIN)
 yarn test                 # pruebas unitarias
 yarn test:e2e --runInBand # pruebas e2e (requiere E2E_DB_MODE en .env)
 yarn test:e2e:all         # todas las e2e en serie (--runInBand --forceExit)
+yarn test:browser-server  # servidor para las pruebas de Playwright del frontend (ver abajo)
 yarn lint
 ```
+
+## Servidor para las pruebas del navegador
+
+`yarn test:browser-server` (`test/browser-e2e-server.ts`) levanta la API como en producción (`configureApp`), pero con Storage y correo en memoria, sobre la base de pruebas aparte (exige `E2E_DB_MODE=isolated`). Arma un escenario con un usuario por rol (SUPER_ADMIN, administrador, docente, estudiante y el administrador de otra institución), un curso con carga, matrícula y una evaluación del periodo en curso, lo escribe en `BROWSER_E2E_SCENARIO` (JSON) y escucha en `BROWSER_E2E_PORT` (3100) con `CORS_ORIGINS` en `BROWSER_E2E_FRONTEND` (http://localhost:5174). Lo usa `yarn test:e2e:integration` del frontend, que lo arranca solo. Lo que crea lleva el prefijo E2E y se barre al empezar.
 
 ## Base de datos local para las e2e
 

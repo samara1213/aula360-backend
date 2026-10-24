@@ -27,7 +27,8 @@
     "seed": "ts-node src/database/seeds/run-seed.ts",
     "storage:setup": "ts-node src/storage/setup-buckets.ts",
     "storage:sweep": "ts-node src/storage/sweep-orphans.ts",
-    "openapi:export": "ts-node src/openapi-export.ts"
+    "openapi:export": "ts-node src/openapi-export.ts",
+    "test:browser-server": "ts-node --transpile-only test/browser-e2e-server.ts"
   },
   "dependencies": {
     "@nestjs/common": "^11.0.1",
