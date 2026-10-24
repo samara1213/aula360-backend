@@ -9,6 +9,8 @@ describe('report-template.engine', () => {
     expect(html).toContain('4,25');
     expect(html).toContain('class="level superior"');
     expect(html).toContain('15/04/2026');
+    // Nombres y luego apellidos, como en el resto de la app.
+    expect(html).toContain('<strong>Ana María Pérez Gómez</strong>');
   });
 
   it('los datos siempre salen escapados (un nombre no inyecta HTML)', () => {

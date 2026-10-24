@@ -50,7 +50,7 @@ export const DEFAULT_REPORT_CARD_TEMPLATE = `<!doctype html>
   <div class="title">Informe académico · {{period.name}} · {{academicYear.year}}</div>
 
   <section class="info">
-    <div><span>Estudiante</span><strong>{{student.lastName}} {{student.firstName}}</strong></div>
+    <div><span>Estudiante</span><strong>{{student.firstName}} {{student.lastName}}</strong></div>
     <div><span>Documento</span><strong>{{student.documentType}} {{student.documentNumber}}</strong></div>
     <div><span>Curso</span><strong>{{course.grade}} · {{course.name}}</strong></div>
     <div><span>Periodo</span><strong>{{date period.startDate}} a {{date period.endDate}}</strong></div>
