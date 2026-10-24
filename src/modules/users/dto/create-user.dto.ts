@@ -34,7 +34,11 @@ export class UserPersonalDataDto {
   @Matches(/^[A-Z]{1,20}$/, { message: 'documentType solo admite letras' })
   documentType: string;
 
-  @ApiProperty({ example: '0000000000', maxLength: 50 })
+  @ApiProperty({
+    example: '0000000000',
+    maxLength: 50,
+    description: 'Número de documento',
+  })
   @Transform(trim)
   @IsString()
   @IsNotEmpty()

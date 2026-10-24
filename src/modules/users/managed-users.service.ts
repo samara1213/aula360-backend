@@ -24,6 +24,7 @@ import {
   Paginated,
   toSkipTake,
 } from '../../common/dto/pagination.dto';
+import { ERROR_CODES } from '../../common/constants/error-codes';
 import { escapeHtml } from '../../common/utils/escape-html';
 import { BCRYPT_COST } from '../../common/validators/password-policy';
 import { rejectNullFields } from '../../common/validators/reject-null-fields';
@@ -59,6 +60,7 @@ import {
   TemporaryPasswordResponseDto,
   UserResponseDto,
 } from './dto/user-response.dto';
+import { InstitutionInvitationEntity } from './entities/institution-invitation.entity';
 import { StudentEntity } from './entities/student.entity';
 import { TeacherEntity } from './entities/teacher.entity';
 import { UserEntity } from './entities/user.entity';
@@ -99,6 +101,45 @@ export type UsersScope = AssignmentScope;
  */
 const MANAGE_FORBIDDEN = 'No tiene permiso para gestionar a este usuario';
 const SUPER_ADMIN_ONLY = 'Este cambio solo lo puede hacer un SUPER_ADMIN';
+
+/** Cuenta activa de docente o estudiante del tipo buscado; si no, 404 o 409 (findLinkable). */
+function assertInvitable(
+  user: UserEntity | null,
+  userType: 'TEACHER' | 'STUDENT',
+): asserts user is UserEntity {
+  if (
+    !user ||
+    !user.isActive ||
+    (user.userType !== 'TEACHER' && user.userType !== 'STUDENT')
+  ) {
+    throw new NotFoundException('No hay una cuenta activa con ese documento');
+  }
+  if (user.userType !== userType) {
+    throw new ConflictException(
+      `Esta persona no se puede invitar como ${USER_TYPE_LABEL[userType]}: si es un error, contacte al administrador de la plataforma`,
+    );
+  }
+}
+
+const USER_TYPE_LABEL: Record<'TEACHER' | 'STUDENT', string> = {
+  TEACHER: 'docente',
+  STUDENT: 'estudiante',
+};
+
+/** Tipo y número de documento de la persona que se busca para vincular. */
+export interface PersonDocument {
+  documentType: string;
+  documentNumber: string;
+}
+
+/** «Carlos P.»: lo justo para confirmar que es la persona (sin más datos). */
+export function shortName(
+  user: Pick<UserEntity, 'firstName' | 'lastName'>,
+): string {
+  const first = user.firstName.trim().split(/\s+/)[0] ?? '';
+  const initial = user.lastName.trim().charAt(0);
+  return initial ? `${first} ${initial.toUpperCase()}.` : first;
+}
 @Injectable()
 export class ManagedUsersService implements OnModuleInit {
   private readonly logger = new Logger(ManagedUsersService.name);
@@ -526,6 +567,188 @@ export class ManagedUsersService implements OnModuleInit {
     throw denied;
   }
 
+  // ------------------------------------------- personas en varias instituciones
+
+  /**
+   * Persona que ya existe (con cuenta en otra institución) y se puede invitar
+   * a esta como docente o estudiante: activa, del mismo tipo y sin
+   * asignaciones aquí (con su perfil de antes, si le quitaron el acceso, se
+   * reincorpora al aceptar). Sin cuenta activa de docente o estudiante con
+   * ese documento: 404, también si es un SUPER_ADMIN o un INSTITUTION_ADMIN
+   * (B5 de la segunda revisión). Docente buscado como estudiante, o al revés:
+   * un 409 que no dice cuál (M1 de la revisión de la entrega A).
+   * Con `lock`, se bloquea la fila solo después de validar, para no bloquear
+   * a quien no se puede invitar (B2 de la segunda revisión; regla 5 de
+   * rbac-multitenant), y se valida de nuevo.
+   */
+  async findLinkable(
+    manager: EntityManager,
+    scope: UsersScope,
+    document: PersonDocument,
+    userType: 'TEACHER' | 'STUDENT',
+    { lock = false }: { lock?: boolean } = {},
+  ): Promise<UserEntity> {
+    const repo = manager.getRepository(UserEntity);
+    let user = await repo.findOneBy({
+      documentType: document.documentType,
+      documentNumber: document.documentNumber,
+    });
+    assertInvitable(user, userType);
+    if (lock) {
+      user = await repo.findOne({
+        where: { id: user.id },
+        lock: { mode: 'pessimistic_write' },
+      });
+      assertInvitable(user, userType);
+    }
+    const here = await manager
+      .getRepository(UserInstitutionRoleEntity)
+      .existsBy({ userId: user.id, institutionId: scope.institutionId });
+    if (here) {
+      throw new ConflictException('Esta persona ya pertenece a la institución');
+    }
+    return user;
+  }
+
+  /**
+   * También está en otra institución (con roles o con un perfil): sus datos
+   * personales y su cuenta los gestiona el SUPER_ADMIN, y aquí solo se le
+   * quita el acceso a esta institución.
+   */
+  async sharedElsewhere(
+    manager: EntityManager,
+    institutionId: string,
+    userId: string,
+  ): Promise<boolean> {
+    const params = { userId, institutionId };
+    const where = 'x.user_id = :userId AND x.institution_id <> :institutionId';
+    const exists = (
+      entity:
+        | typeof UserInstitutionRoleEntity
+        | typeof TeacherEntity
+        | typeof StudentEntity,
+    ) =>
+      manager
+        .getRepository(entity)
+        .createQueryBuilder('x')
+        .where(where, params)
+        .getExists();
+    return (
+      (await exists(UserInstitutionRoleEntity)) ||
+      (await exists(TeacherEntity)) ||
+      (await exists(StudentEntity))
+    );
+  }
+
+  /**
+   * Quita todos sus roles en esta institución: deja de entrar a ella (en la
+   * siguiente petición) y conserva su cuenta, su acceso a las otras y su
+   * historial aquí (perfil, notas, boletines). Reglas:
+   * - Solo para quien también está en otra institución (roles o perfil, el
+   *   mismo criterio que sharedElsewhere: A2 de la revisión de la entrega A);
+   *   si no, se desactiva.
+   * - Sin cargas académicas ni matrícula vigentes aquí (M2): se terminan
+   *   antes en Académico, para que no las recupere al volver.
+   * - Con el permiso de quitar roles (security.users, delete; B1) y, con
+   *   alcance por sede, si todos sus roles aquí están en esas sedes.
+   * Para volver: una invitación nueva.
+   */
+  async removeInstitutionAccess(scope: UsersScope, id: string): Promise<void> {
+    await this.dataSource.transaction(async (manager) => {
+      await this.assertInstitutionExists(manager, scope);
+      const { user, campusScope } = await this.findVisible(
+        manager,
+        scope,
+        id,
+        'update',
+        { lock: true },
+      );
+      await this.assertCanManage(manager, scope, user);
+      const repo = manager.getRepository(UserInstitutionRoleEntity);
+      if (
+        !(await this.sharedElsewhere(manager, scope.institutionId, user.id))
+      ) {
+        throw new ConflictException(
+          'Solo tiene acceso a esta institución: desactívelo en lugar de quitarle el acceso',
+        );
+      }
+      const roles = await repo.find({
+        where: { userId: user.id, institutionId: scope.institutionId },
+      });
+      const deleteScope = await this.permissions.campusScope(
+        scope.user.userId,
+        scope.institutionId,
+        ASSIGNMENT_PERMISSION,
+        'delete',
+        { manager },
+      );
+      const outside = (allowed: string[]) =>
+        roles.some((r) => !r.campusId || !allowed.includes(r.campusId));
+      if (deleteScope && (deleteScope.length === 0 || outside(deleteScope))) {
+        throw new ForbiddenException(
+          'Necesita el permiso de quitar roles en todas sus sedes para quitarle el acceso',
+        );
+      }
+      if (campusScope && outside(campusScope)) {
+        throw new ForbiddenException(
+          'Tiene roles fuera de sus sedes: solo un administrador de toda la institución puede quitarle el acceso',
+        );
+      }
+      await this.assertNothingCurrent(manager, scope.institutionId, user.id);
+      // También el rol STUDENT atado al perfil: el perfil se conserva y, al
+      // aceptar una invitación nueva, se le asigna de nuevo en su sede.
+      await repo.delete({
+        userId: user.id,
+        institutionId: scope.institutionId,
+      });
+      // Para volver hace falta una invitación nueva: las pendientes de antes
+      // (de cuando entró por otra vía) dejan de valer (B4 de la segunda revisión).
+      await manager.getRepository(InstitutionInvitationEntity).update(
+        {
+          userId: user.id,
+          institutionId: scope.institutionId,
+          status: 'PENDING',
+        },
+        { status: 'CANCELLED', respondedAt: new Date() },
+      );
+      this.audit(scope, 'user.institution-access-removed', user.id, {
+        roles: roles.length,
+      });
+    });
+  }
+
+  /** 409 si tiene cargas académicas activas o una matrícula vigente en la institución. */
+  private async assertNothingCurrent(
+    manager: EntityManager,
+    institutionId: string,
+    userId: string,
+  ): Promise<void> {
+    const [{ loads, enrolled }] = await manager.query<
+      { loads: number; enrolled: boolean }[]
+    >(
+      `SELECT
+         (SELECT count(*)::int FROM teacher_subject_courses tsc
+            JOIN teachers t ON t.id = tsc.teacher_id
+           WHERE t.user_id = $1 AND t.institution_id = $2 AND tsc.is_active) AS loads,
+         EXISTS (SELECT 1 FROM enrollments e
+            JOIN students s ON s.id = e.student_id
+            JOIN academic_years y ON y.id = e.academic_year_id AND y.is_active
+           WHERE s.user_id = $1 AND s.institution_id = $2
+             AND e.status IN ('ENROLLED', 'SUSPENDED')) AS enrolled`,
+      [userId, institutionId],
+    );
+    if (loads > 0) {
+      throw new ConflictException(
+        `Tiene ${loads} carga${loads === 1 ? '' : 's'} académica${loads === 1 ? '' : 's'} vigente${loads === 1 ? '' : 's'}: termínelas primero en Académico`,
+      );
+    }
+    if (enrolled) {
+      throw new ConflictException(
+        'Tiene una matrícula vigente: retírelo primero en Académico',
+      );
+    }
+  }
+
   /** Desactivar cierra todas sus sesiones (pierde el acceso en la siguiente petición). */
   async setStatus(
     scope: UsersScope,
@@ -844,12 +1067,19 @@ export class ManagedUsersService implements OnModuleInit {
       [user.id],
       this.pendingScope(scope),
     );
-    return UserResponseDto.from(
-      user,
-      byUser.get(user.id) ?? [],
-      this.isSuperAdmin(scope),
-      pending.get(user.id) ?? null,
-    );
+    return {
+      ...UserResponseDto.from(
+        user,
+        byUser.get(user.id) ?? [],
+        this.isSuperAdmin(scope),
+        pending.get(user.id) ?? null,
+      ),
+      // Solo desde una institución: el SUPER_ADMIN gestiona la cuenta entera.
+      sharedElsewhere:
+        scope.kind === 'institution'
+          ? await this.sharedElsewhere(manager, scope.institutionId, user.id)
+          : undefined,
+    };
   }
 
   private async insertUser(
@@ -882,9 +1112,10 @@ export class ManagedUsersService implements OnModuleInit {
       error instanceof QueryFailedError &&
       (error as QueryFailedError & { code?: string }).code === '23505'
     ) {
-      return new ConflictException(
-        'Ya existe un usuario con ese documento o email',
-      );
+      return new ConflictException({
+        message: 'Ya existe un usuario con ese documento o email',
+        code: ERROR_CODES.USER_ALREADY_EXISTS,
+      });
     }
     return error;
   }

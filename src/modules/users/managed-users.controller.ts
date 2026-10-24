@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Header,
   HttpCode,
@@ -14,6 +15,7 @@ import {
 import {
   ApiBadRequestResponse,
   ApiConflictResponse,
+  ApiNoContentResponse,
   ApiCreatedResponse,
   ApiForbiddenResponse,
   ApiNotFoundResponse,
@@ -155,6 +157,26 @@ export class ManagedUsersController {
     @Body() dto: UpdateUserStatusDto,
   ): Promise<UserResponseDto> {
     return this.users.setStatus(scopeOf(user), id, dto);
+  }
+
+  @Delete(':id/institution-access')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @RequirePermission(USERS_PERMISSION, 'update')
+  @Throttle(SENSITIVE_ACTION_THROTTLE)
+  @ApiOperation({
+    summary:
+      'Quitar el acceso a esta institución (persona que también está en otra)',
+    description:
+      'Quita todos sus roles en la institución activa: deja de entrar a ella en la siguiente petición y conserva su cuenta, su acceso a las demás y su historial aquí (perfil, cargas, notas, boletines). Solo si tiene acceso a otra institución (si no, 409: se desactiva con PATCH /users/:id/status). Exige además el permiso de quitar roles (security.users, eliminar) en todas sus sedes; con alcance por sede, solo si todos sus roles aquí están en esas sedes. 409 si tiene cargas académicas o una matrícula vigentes aquí. Cancela sus invitaciones pendientes de la institución. Para volver: una invitación nueva (POST /teachers/invitations o /students/invitations).',
+  })
+  @ApiNoContentResponse({ description: 'Acceso quitado' })
+  @ApiNotFoundResponse({ description: 'Usuario no encontrado' })
+  @ApiConflictResponse({ description: 'Solo tiene acceso a esta institución' })
+  removeInstitutionAccess(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+  ): Promise<void> {
+    return this.users.removeInstitutionAccess(scopeOf(user), id);
   }
 
   @Post(':id/temporary-password')

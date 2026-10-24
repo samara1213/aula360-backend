@@ -19,6 +19,7 @@ import { MenuOptionEntity } from '../modules/security/entities/menu-option.entit
 import { RoleMenuPermissionEntity } from '../modules/security/entities/role-menu-permission.entity';
 import { RoleEntity } from '../modules/security/entities/role.entity';
 import { UserInstitutionRoleEntity } from '../modules/security/entities/user-institution-role.entity';
+import { InstitutionInvitationEntity } from '../modules/users/entities/institution-invitation.entity';
 import { StudentEntity } from '../modules/users/entities/student.entity';
 import { TeacherEntity } from '../modules/users/entities/teacher.entity';
 import { UserEntity } from '../modules/users/entities/user.entity';
@@ -51,4 +52,5 @@ export const ALL_ENTITIES = [
   ReportCardTemplateEntity,
   StorageDeletionEntity,
   EmailVerificationTokenEntity,
+  InstitutionInvitationEntity,
 ];

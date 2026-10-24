@@ -1,8 +1,11 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Header,
+  HttpCode,
+  HttpStatus,
   Param,
   ParseUUIDPipe,
   Patch,
@@ -18,6 +21,8 @@ import {
   ApiOkResponse,
   ApiOperation,
   ApiTags,
+  ApiNoContentResponse,
+  ApiTooManyRequestsResponse,
 } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import {
@@ -46,6 +51,13 @@ import {
   TeacherQueryDto,
   UpdateTeacherDto,
 } from './dto/teacher.dto';
+import {
+  CreateInvitationDto,
+  InvitationResponseDto,
+  LinkCandidateResponseDto,
+  PersonDocumentDto,
+} from './dto/person-link.dto';
+import { InvitationsService } from './invitations.service';
 import { UsersScope } from './managed-users.service';
 import { STUDENTS_PERMISSION, StudentsService } from './students.service';
 import { TEACHERS_PERMISSION, TeachersService } from './teachers.service';
@@ -65,7 +77,102 @@ const PERSONAL_NOTE =
 @ApiForbiddenResponse({ description: 'Sin permiso para esta acción' })
 @Controller('teachers')
 export class TeachersController {
-  constructor(private readonly teachers: TeachersService) {}
+  constructor(
+    private readonly teachers: TeachersService,
+    private readonly invitations: InvitationsService,
+  ) {}
+
+  // Antes de :id: «link-candidate» e «invitations» no son UUID.
+  @Get('link-candidate')
+  @RequirePermission(TEACHERS_PERMISSION, 'create')
+  @Throttle(SENSITIVE_ACTION_THROTTLE)
+  @Header('Cache-Control', 'no-store')
+  @ApiOperation({
+    summary:
+      'Buscar por documento a quien ya tiene cuenta, para invitarlo como docente',
+    description:
+      'Coincidencia exacta. Responde solo el nombre y la inicial del apellido («Carlos P.»). 404 si no hay una cuenta activa con ese documento; 409 si ya pertenece a la institución o no se puede invitar como docente (sin decir por qué). Toda consulta queda auditada.',
+  })
+  @ApiOkResponse({ type: LinkCandidateResponseDto })
+  @ApiNotFoundResponse({
+    description: 'No hay una cuenta activa con ese documento',
+  })
+  @ApiConflictResponse({
+    description: 'Ya pertenece o no se puede invitar como docente',
+  })
+  linkCandidate(
+    @CurrentUser() user: AuthUser,
+    @Query() query: PersonDocumentDto,
+  ): Promise<LinkCandidateResponseDto> {
+    return this.invitations.candidate(
+      scopeOf(user, TEACHERS_PERMISSION),
+      'TEACHER',
+      query,
+    );
+  }
+
+  @Get('invitations')
+  @RequirePermission(TEACHERS_PERMISSION, 'create')
+  @ApiOperation({
+    summary: 'Invitaciones pendientes como docente',
+    description:
+      'Solo el nombre corto y la sede: nada más hasta que la persona acepte.',
+  })
+  @ApiOkResponse({ type: [InvitationResponseDto] })
+  listInvitations(
+    @CurrentUser() user: AuthUser,
+  ): Promise<InvitationResponseDto[]> {
+    return this.invitations.list(scopeOf(user, TEACHERS_PERMISSION), 'TEACHER');
+  }
+
+  @Post('invitations')
+  @RequirePermission(TEACHERS_PERMISSION, 'create')
+  @Throttle(SENSITIVE_ACTION_THROTTLE)
+  @ApiOperation({
+    summary: 'Invitar como docente a quien ya tiene cuenta en otra institución',
+    description:
+      'La persona la acepta o la rechaza con su sesión (GET /users/me/invitations); vence a los 14 días. Hasta que acepte, la institución no ve sus datos. Al aceptar se crean su rol en la sede indicada y su perfil. Se le avisa por correo si lo tiene verificado (a un estudiante, también a sus acudientes de las otras instituciones). Máximo 30 por día por institución.',
+  })
+  @ApiCreatedResponse({ type: InvitationResponseDto })
+  @ApiBadRequestResponse({ description: 'Datos inválidos o sede inactiva' })
+  @ApiNotFoundResponse({
+    description:
+      'No hay una cuenta activa con ese documento, o sede no encontrada',
+  })
+  @ApiConflictResponse({
+    description:
+      'Ya pertenece, ya tiene una invitación pendiente o no se puede invitar',
+  })
+  @ApiTooManyRequestsResponse({
+    description: 'Límite diario de invitaciones de la institución',
+  })
+  invite(
+    @CurrentUser() user: AuthUser,
+    @Body() dto: CreateInvitationDto,
+  ): Promise<InvitationResponseDto> {
+    return this.invitations.create(
+      scopeOf(user, TEACHERS_PERMISSION),
+      'TEACHER',
+      dto,
+    );
+  }
+
+  @Delete('invitations/:invitationId')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @RequirePermission(TEACHERS_PERMISSION, 'create')
+  @ApiOperation({ summary: 'Cancelar una invitación pendiente' })
+  @ApiNoContentResponse({ description: 'Invitación cancelada' })
+  @ApiNotFoundResponse({ description: 'Invitación no encontrada' })
+  cancelInvitation(
+    @CurrentUser() user: AuthUser,
+    @Param('invitationId', ParseUUIDPipe) invitationId: string,
+  ): Promise<void> {
+    return this.invitations.cancel(
+      scopeOf(user, TEACHERS_PERMISSION),
+      'TEACHER',
+      invitationId,
+    );
+  }
 
   @Get()
   @RequirePermission(TEACHERS_PERMISSION, 'view')
@@ -135,7 +242,103 @@ export class TeachersController {
 @ApiForbiddenResponse({ description: 'Sin permiso para esta acción' })
 @Controller('students')
 export class StudentsController {
-  constructor(private readonly students: StudentsService) {}
+  constructor(
+    private readonly students: StudentsService,
+    private readonly invitations: InvitationsService,
+  ) {}
+
+  // Antes de :id: «link-candidate» e «invitations» no son UUID.
+  @Get('link-candidate')
+  @RequirePermission(STUDENTS_PERMISSION, 'create')
+  @Throttle(SENSITIVE_ACTION_THROTTLE)
+  @Header('Cache-Control', 'no-store')
+  @ApiOperation({
+    summary:
+      'Buscar por documento a quien ya tiene cuenta, para invitarlo como estudiante',
+    description:
+      'Coincidencia exacta. Responde solo el nombre y la inicial del apellido («Carlos P.»). 404 si no hay una cuenta activa con ese documento; 409 si ya pertenece a la institución o no se puede invitar como estudiante (sin decir por qué). Toda consulta queda auditada.',
+  })
+  @ApiOkResponse({ type: LinkCandidateResponseDto })
+  @ApiNotFoundResponse({
+    description: 'No hay una cuenta activa con ese documento',
+  })
+  @ApiConflictResponse({
+    description: 'Ya pertenece o no se puede invitar como estudiante',
+  })
+  linkCandidate(
+    @CurrentUser() user: AuthUser,
+    @Query() query: PersonDocumentDto,
+  ): Promise<LinkCandidateResponseDto> {
+    return this.invitations.candidate(
+      scopeOf(user, STUDENTS_PERMISSION),
+      'STUDENT',
+      query,
+    );
+  }
+
+  @Get('invitations')
+  @RequirePermission(STUDENTS_PERMISSION, 'create')
+  @ApiOperation({
+    summary: 'Invitaciones pendientes como estudiante',
+    description:
+      'Solo el nombre corto y la sede: nada más hasta que la persona acepte.',
+  })
+  @ApiOkResponse({ type: [InvitationResponseDto] })
+  listInvitations(
+    @CurrentUser() user: AuthUser,
+  ): Promise<InvitationResponseDto[]> {
+    return this.invitations.list(scopeOf(user, STUDENTS_PERMISSION), 'STUDENT');
+  }
+
+  @Post('invitations')
+  @RequirePermission(STUDENTS_PERMISSION, 'create')
+  @Throttle(SENSITIVE_ACTION_THROTTLE)
+  @ApiOperation({
+    summary:
+      'Invitar como estudiante a quien ya tiene cuenta en otra institución',
+    description:
+      'La persona la acepta o la rechaza con su sesión (GET /users/me/invitations); vence a los 14 días. Hasta que acepte, la institución no ve sus datos. Al aceptar se crean su rol en la sede indicada y su perfil. Se le avisa por correo si lo tiene verificado (a un estudiante, también a sus acudientes de las otras instituciones). Máximo 30 por día por institución.',
+  })
+  @ApiCreatedResponse({ type: InvitationResponseDto })
+  @ApiBadRequestResponse({ description: 'Datos inválidos o sede inactiva' })
+  @ApiNotFoundResponse({
+    description:
+      'No hay una cuenta activa con ese documento, o sede no encontrada',
+  })
+  @ApiConflictResponse({
+    description:
+      'Ya pertenece, ya tiene una invitación pendiente o no se puede invitar',
+  })
+  @ApiTooManyRequestsResponse({
+    description: 'Límite diario de invitaciones de la institución',
+  })
+  invite(
+    @CurrentUser() user: AuthUser,
+    @Body() dto: CreateInvitationDto,
+  ): Promise<InvitationResponseDto> {
+    return this.invitations.create(
+      scopeOf(user, STUDENTS_PERMISSION),
+      'STUDENT',
+      dto,
+    );
+  }
+
+  @Delete('invitations/:invitationId')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @RequirePermission(STUDENTS_PERMISSION, 'create')
+  @ApiOperation({ summary: 'Cancelar una invitación pendiente' })
+  @ApiNoContentResponse({ description: 'Invitación cancelada' })
+  @ApiNotFoundResponse({ description: 'Invitación no encontrada' })
+  cancelInvitation(
+    @CurrentUser() user: AuthUser,
+    @Param('invitationId', ParseUUIDPipe) invitationId: string,
+  ): Promise<void> {
+    return this.invitations.cancel(
+      scopeOf(user, STUDENTS_PERMISSION),
+      'STUDENT',
+      invitationId,
+    );
+  }
 
   @Get()
   @RequirePermission(STUDENTS_PERMISSION, 'view')

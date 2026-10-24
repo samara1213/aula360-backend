@@ -4,6 +4,9 @@ import { AuthModule } from '../auth/auth.module';
 import { MailModule } from '../mail/mail.module';
 import { SecurityModule } from '../security/security.module';
 import { UserEntity } from './entities/user.entity';
+import { MyInvitationsController } from './invitations.controller';
+import { InvitationsService } from './invitations.service';
+import { LookupBudget } from './lookup-budget';
 import {
   InstitutionUsersController,
   ManagedUsersController,
@@ -26,6 +29,7 @@ import { UsersService } from './users.service';
   // registrarse antes que las de /users/:id.
   controllers: [
     UsersController,
+    MyInvitationsController,
     ManagedUsersController,
     InstitutionUsersController,
     TeachersController,
@@ -36,6 +40,8 @@ import { UsersService } from './users.service';
     ManagedUsersService,
     TeachersService,
     StudentsService,
+    InvitationsService,
+    LookupBudget,
   ],
 })
 export class UsersModule {}

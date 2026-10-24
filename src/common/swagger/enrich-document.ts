@@ -32,6 +32,8 @@ const PATH_PARAMS: Record<string, string> = {
   institutionId: 'UUID de la institución',
   courseId: 'UUID del curso',
   studentId: 'UUID del estudiante (su usuario)',
+  invitationId:
+    'UUID de la invitación. Si no está pendiente o es de otra institución: 404',
 };
 
 /** Campos que se repiten en casi todos los DTOs: misma descripción en toda la API. */

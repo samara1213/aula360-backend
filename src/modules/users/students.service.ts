@@ -195,10 +195,18 @@ export class StudentsService {
 
     // Documento, contacto, acudiente y tipo de sangre: solo para quien puede
     // editar a ESTE estudiante.
+    const sharedElsewhere = await this.users.sharedElsewhere(
+      manager,
+      scope.institutionId,
+      student.userId,
+    );
     if (!canEdit(updateScope, student)) {
-      return StudentResponseDto.fromDetail(student, undefined);
+      return {
+        ...StudentResponseDto.fromDetail(student, undefined),
+        sharedElsewhere,
+      };
     }
-    return this.fullDetail(manager, student);
+    return { ...(await this.fullDetail(manager, student)), sharedElsewhere };
   }
 
   async create(

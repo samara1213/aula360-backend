@@ -98,7 +98,14 @@ export class TeachersService {
       campusScope,
       id,
     );
-    return TeacherResponseDto.from(teacher);
+    return {
+      ...TeacherResponseDto.from(teacher),
+      sharedElsewhere: await this.users.sharedElsewhere(
+        this.dataSource.manager,
+        scope.institutionId,
+        teacher.userId,
+      ),
+    };
   }
 
   async create(

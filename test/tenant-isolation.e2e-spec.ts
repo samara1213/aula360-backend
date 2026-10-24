@@ -58,6 +58,9 @@ interface Tenant {
   /** Curso sin cargas ni matrículas y estudiante sin matrícula: se pueden mover. */
   freeCourse: string;
   freeStudent: Person;
+  /** Invitaciones pendientes de la institución (a personas de una tercera). */
+  teacherInvitation: string;
+  studentInvitation: string;
 }
 
 const suffix = () => randomBytes(4).toString('hex');
@@ -289,6 +292,9 @@ describe('Aislamiento entre instituciones (e2e)', () => {
       levels: levels.levels.map((l) => l.id),
       freeCourse,
       freeStudent,
+      // Se crean en beforeAll, cuando ya existen las dos instituciones.
+      teacherInvitation: '',
+      studentInvitation: '',
     };
   }
 
@@ -465,6 +471,25 @@ describe('Aislamiento entre instituciones (e2e)', () => {
         `SELECT id FROM menu_options WHERE slug = 'academic.courses'`,
       )
     )[0].id;
+
+    // Cada institución invita a un docente y a un estudiante de una tercera.
+    const third = await data.createInstitution('Colegio C');
+    for (const t of [a, b]) {
+      const invite = async (profile: 'TEACHER' | 'STUDENT') => {
+        const invited = await data.createUser({ userType: profile });
+        await data.assignGlobalRole(invited.id, third.id, profile);
+        const kind = profile === 'TEACHER' ? 'teachers' : 'students';
+        return (
+          await ok(t.admin, 'post', `/${kind}/invitations`, {
+            documentType: invited.documentType,
+            documentNumber: invited.documentNumber,
+            campusId: t.campus1,
+          })
+        ).id;
+      };
+      t.teacherInvitation = await invite('TEACHER');
+      t.studentInvitation = await invite('STUDENT');
+    }
 
     const bUsers = await usersOf(b.institution.id);
     bEmails = bUsers.flatMap((u) => (u.email ? [u.email] : []));
@@ -720,6 +745,32 @@ describe('Aislamiento entre instituciones (e2e)', () => {
         route: 'POST /users/:id/temporary-password',
         path: `/users/${t.student.userId}/temporary-password`,
         expected: user,
+      },
+      {
+        route: 'DELETE /users/:id/institution-access',
+        path: `/users/${t.student.userId}/institution-access`,
+        expected: user,
+      },
+      {
+        route: 'DELETE /teachers/invitations/:invitationId',
+        path: `/teachers/invitations/${t.teacherInvitation}`,
+        expected: nf('Invitación no encontrada'),
+      },
+      {
+        route: 'DELETE /students/invitations/:invitationId',
+        path: `/students/invitations/${t.studentInvitation}`,
+        expected: nf('Invitación no encontrada'),
+      },
+      {
+        // Solo la persona invitada responde la suya.
+        route: 'POST /users/me/invitations/:id/accept',
+        path: `/users/me/invitations/${t.teacherInvitation}/accept`,
+        expected: nf('Invitación no encontrada'),
+      },
+      {
+        route: 'POST /users/me/invitations/:id/reject',
+        path: `/users/me/invitations/${t.studentInvitation}/reject`,
+        expected: nf('Invitación no encontrada'),
       },
       {
         route: 'GET /teachers/:id',
@@ -1356,6 +1407,26 @@ describe('Aislamiento entre instituciones (e2e)', () => {
           expected: nf('Sede no encontrada'),
         },
         {
+          route: 'POST /teachers/invitations',
+          path: '/teachers/invitations',
+          body: {
+            documentType: 'CC',
+            documentNumber: b.teacher.documentNumber,
+            campusId: b.campus1,
+          },
+          expected: nf('Sede no encontrada'),
+        },
+        {
+          route: 'POST /students/invitations',
+          path: '/students/invitations',
+          body: {
+            documentType: 'CC',
+            documentNumber: b.student.documentNumber,
+            campusId: b.campus1,
+          },
+          expected: nf('Sede no encontrada'),
+        },
+        {
           route: 'PATCH /students/:id',
           path: `/students/${a.freeStudent.id}`,
           body: { campusId: b.campus1 },
@@ -1608,6 +1679,25 @@ describe('Aislamiento entre instituciones (e2e)', () => {
       {
         route: 'GET /users',
         path: `/users?roleId=${b.role}&campusId=${b.campus1}`,
+      },
+      {
+        route: 'GET /teachers/invitations',
+        path: '/teachers/invitations',
+        own: a.teacherInvitation,
+      },
+      {
+        route: 'GET /students/invitations',
+        path: '/students/invitations',
+        own: a.studentInvitation,
+      },
+      { route: 'GET /users/me/invitations', path: '/users/me/invitations' },
+      {
+        route: 'GET /teachers/link-candidate',
+        path: `/teachers/link-candidate?documentType=CC&documentNumber=${b.teacher.documentNumber}`,
+      },
+      {
+        route: 'GET /students/link-candidate',
+        path: `/students/link-candidate?documentType=CC&documentNumber=${b.student.documentNumber}`,
       },
       {
         route: 'GET /teachers',

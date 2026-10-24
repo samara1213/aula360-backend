@@ -1,4 +1,4 @@
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { PaginationMetaDto } from '../../../common/dto/list-query.dto';
 import {
   AssignmentCampusDto,
@@ -73,6 +73,12 @@ export class UserResponseDto {
       'El email pendiente; solo lo ve un SUPER_ADMIN (null para los demás)',
   })
   pendingEmail: string | null;
+
+  @ApiPropertyOptional({
+    description:
+      'Solo en el detalle: también está en otra institución. Sus datos personales y su cuenta los gestiona el SUPER_ADMIN; aquí se le quita el acceso con DELETE /users/:id/institution-access.',
+  })
+  sharedElsewhere?: boolean;
 
   @ApiProperty({ type: String, nullable: true })
   phone: string | null;

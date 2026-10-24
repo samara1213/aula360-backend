@@ -128,6 +128,19 @@ async function main() {
   const teacherProfile = await dataSource
     .getRepository(TeacherEntity)
     .save({ userId: teacher.id, institutionId: institution.id });
+  // Docente de la otra institución: el administrador lo invita a la suya
+  // (persona que ya tiene cuenta), él acepta y después le quitan el acceso.
+  const shared = await person('TEACHER', 'Carlos', 'Compartido');
+  await data.assignGlobalRole(shared.id, other.id, 'TEACHER');
+  await dataSource
+    .getRepository(TeacherEntity)
+    .save({ userId: shared.id, institutionId: other.id });
+  const sharedDocument = await dataSource
+    .getRepository(UserEntity)
+    .findOneOrFail({
+      select: { documentType: true, documentNumber: true },
+      where: { id: shared.id },
+    });
   const student = await person('STUDENT', 'Valentina', 'Estudiante');
   await data.assignGlobalRole(student.id, institution.id, 'STUDENT');
   const studentProfile = await dataSource.getRepository(StudentEntity).save({
@@ -206,7 +219,11 @@ async function main() {
     password,
     institution: { id: institution.id, name: institution.name },
     otherInstitution: { id: other.id, name: other.name },
-    users: { superAdmin, admin, otherAdmin, teacher, student },
+    users: { superAdmin, admin, otherAdmin, teacher, student, shared },
+    sharedDocument: {
+      documentType: sharedDocument.documentType,
+      documentNumber: sharedDocument.documentNumber,
+    },
     studentId: studentProfile.id,
     courseId,
     periodId,

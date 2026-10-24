@@ -112,6 +112,7 @@ describe('StudentsService', () => {
     insertUserWithAssignment: jest.fn(),
     afterCreate: jest.fn(),
     applyPersonalChanges: jest.fn(),
+    sharedElsewhere: jest.fn().mockResolvedValue(false),
     notifyEmailChange: jest.fn(),
   };
   const assignments = { validateAssignment: jest.fn() };

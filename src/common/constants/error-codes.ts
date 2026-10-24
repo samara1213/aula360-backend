@@ -18,6 +18,11 @@ export const ERROR_CODES = {
    * force (409). Sin ninguna definitiva no lleva este código.
    */
   REPORT_CARD_PENDING_FINALS: 'REPORT_CARD_PENDING_FINALS',
+  /**
+   * Alta con un documento o un email que ya usa otra cuenta (409; no dice
+   * cuál). El frontend ofrece buscarla por documento e invitarla.
+   */
+  USER_ALREADY_EXISTS: 'USER_ALREADY_EXISTS',
 } as const;
 
 export type ErrorCode = (typeof ERROR_CODES)[keyof typeof ERROR_CODES];

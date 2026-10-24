@@ -82,6 +82,12 @@ export class TeacherResponseDto {
   @ApiProperty()
   createdAt: Date;
 
+  @ApiPropertyOptional({
+    description:
+      'Solo en el detalle: también está en otra institución. Sus datos personales y su cuenta los gestiona el SUPER_ADMIN; aquí se le quita el acceso con DELETE /users/:id/institution-access.',
+  })
+  sharedElsewhere?: boolean;
+
   /** Requiere user cargado. */
   static from(teacher: TeacherEntity): TeacherResponseDto {
     return {
@@ -240,6 +246,12 @@ export class StudentResponseDto extends StudentSummaryDto {
       'Dato sensible (Ley 1581): solo aparece si usted puede editar a este estudiante',
   })
   bloodType?: string | null;
+
+  @ApiPropertyOptional({
+    description:
+      'Solo en el detalle: también está en otra institución. Sus datos personales y su cuenta los gestiona el SUPER_ADMIN; aquí se le quita el acceso con DELETE /users/:id/institution-access.',
+  })
+  sharedElsewhere?: boolean;
 
   /**
    * sensitive: undefined = quien solo puede ver (sin documento, contacto,
